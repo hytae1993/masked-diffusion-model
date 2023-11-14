@@ -9,6 +9,7 @@ import datetime
 class Dir:
     def __init__(self, 
                  task: str, 
+                 content: str,
                  dir_work: str, 
                  dir_dataset: str, 
                  data_name: str,
@@ -17,6 +18,8 @@ class Dir:
                  date: str='', 
                  time: str='',
                  title: str=''):
+        self.task               = task
+        self.content            = content
         self.dir_work           = dir_work
         self.dir_dataset        = dir_dataset
         self.data_name          = data_name
@@ -33,7 +36,7 @@ class Dir:
             self.time = now.strftime('%H_%M_%S')
 
         self.list_dir_sub   = self._build_dir_sub()
-        self.list_dir       = self._build_dir(task)
+        self.list_dir       = self._build_dir(self.task)
         
 
     def _build_dir_sub(self):
@@ -66,35 +69,41 @@ class Dir:
 
     def _build_dir_train(self):
         
-        save_dir    = os.path.join(self.dir_work, 'result', self.list_dir_sub['data_name'], self.list_dir_sub['time'], self.list_dir_sub['title'])
+        save_dir    = os.path.join(self.dir_work, 'result', self.content, self.list_dir_sub['data_name'], self.list_dir_sub['time'], self.list_dir_sub['title'])
         
         dir_list = {
             'img'           : os.path.join(save_dir, 'train', 'image', 'img'),
             'train_img'     : os.path.join(save_dir, 'train', 'image', 'train_image'),
-            'masked_img'    : os.path.join(save_dir, 'train', 'image', 'masked_image'),
+            'mask_img'      : os.path.join(save_dir, 'train', 'image', 'mask_image'),
             'noise_img'     : os.path.join(save_dir, 'train', 'image', 'noise_image'),
-            'predict_img' : os.path.join(save_dir, 'train', 'image', 'predict_image'),
-            'sample_img' : os.path.join(save_dir, 'train', 'image', 'sample_image'),
+            'noisy_img'     : os.path.join(save_dir, 'train', 'image', 'noisy_image'),
+            'predict_img'   : os.path.join(save_dir, 'train', 'image', 'predict_image'),
+            'sample_img'    : os.path.join(save_dir, 'train', 'image', 'sample_image'),
+            'sample_grid'   : os.path.join(save_dir, 'train', 'image', 'sample_grid'),
             'train_loss'    : os.path.join(save_dir, 'train', 'loss'),
             'train_pred'    : os.path.join(save_dir, 'train', 'prediction'),
             'log'           : os.path.join(save_dir, 'log'),
             'model'         : os.path.join(save_dir, 'model'),
             'option'        : os.path.join(save_dir, 'option'),
             'loss'          : os.path.join(save_dir, 'loss'),
+            'checkpoint'        : os.path.join(save_dir, 'checkpoint'),
             }      
         
         os.makedirs(dir_list['img'], exist_ok=True)
         os.makedirs(dir_list['train_img'], exist_ok=True)
-        os.makedirs(dir_list['masked_img'], exist_ok=True)
+        os.makedirs(dir_list['mask_img'], exist_ok=True)
         os.makedirs(dir_list['noise_img'], exist_ok=True)
+        os.makedirs(dir_list['noisy_img'], exist_ok=True)
         os.makedirs(dir_list['predict_img'], exist_ok=True)
         os.makedirs(dir_list['sample_img'], exist_ok=True)
+        os.makedirs(dir_list['sample_grid'], exist_ok=True)
         os.makedirs(dir_list['train_loss'], exist_ok=True)
         os.makedirs(dir_list['train_pred'], exist_ok=True)
         os.makedirs(dir_list['log'], exist_ok=True)
         os.makedirs(dir_list['model'], exist_ok=True)
         os.makedirs(dir_list['option'], exist_ok=True)
         os.makedirs(dir_list['loss'], exist_ok=True)
+        os.makedirs(dir_list['checkpoint'], exist_ok=True)
         
         return dir_list
 
