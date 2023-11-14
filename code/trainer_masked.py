@@ -259,6 +259,12 @@ class Trainer:
         axarr[3].imshow(grid_mask.transpose((1,2,0)))
         axarr[4].imshow(grid_final.transpose((1,2,0)))
         
+        axarr[0].set_title("input")
+        axarr[1].set_title("noise")
+        axarr[2].set_title("noisy")
+        axarr[3].set_title("output")
+        axarr[4].set_title("output + noisy")
+        
         axarr[0].axis("off")
         axarr[1].axis("off")
         axarr[2].axis("off")
