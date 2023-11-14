@@ -155,7 +155,7 @@ class Sampler:
         sample      = latent.to(model.device)
         
         sample_per  = int(time_length / 5)
-        sample_list = []
+        sample_list = [sample]
         sample_t    = [time_length - sample_per, time_length - sample_per*2, time_length - sample_per*3, time_length - sample_per*4, time_length - sample_per*5]
         
         # time_length_batch = torch.Tensor([time_length])
@@ -301,32 +301,37 @@ class Sampler:
         nrow        = int(np.ceil(np.sqrt(batch_size)))
         grid_name   = os.path.join(dir_save, file_sample)
         
-        grid1       = make_grid(sample[0], nrow=nrow, normalize=True)
+        grid1       = make_grid(sample[0], nrow=nrow)
         grid2       = make_grid(sample[1], nrow=nrow, normalize=True)
         grid3       = make_grid(sample[2], nrow=nrow, normalize=True)
         grid4       = make_grid(sample[3], nrow=nrow, normalize=True)
         grid5       = make_grid(sample[4], nrow=nrow, normalize=True)
+        grid6       = make_grid(sample[5], nrow=nrow, normalize=True)
         
         grid1       = (grid1.cpu().numpy() * 255).round().astype("uint8")
         grid2       = (grid2.cpu().numpy() * 255).round().astype("uint8")
         grid3       = (grid3.cpu().numpy() * 255).round().astype("uint8")
         grid4       = (grid4.cpu().numpy() * 255).round().astype("uint8")
         grid5       = (grid5.cpu().numpy() * 255).round().astype("uint8")
+        grid6       = (grid6.cpu().numpy() * 255).round().astype("uint8")
         
-        fig, axarr = plt.subplots(1,5) 
-        axarr[0].imshow(grid1.transpose((1,2,0)))
-        axarr[1].imshow(grid2.transpose((1,2,0)))
-        axarr[2].imshow(grid3.transpose((1,2,0)))
-        axarr[3].imshow(grid4.transpose((1,2,0)))
-        axarr[4].imshow(grid5.transpose((1,2,0)))
+        fig, axarr = plt.subplots(2,3) 
+        axarr[0][0].imshow(grid1.transpose((1,2,0)))
+        axarr[0][1].imshow(grid2.transpose((1,2,0)))
+        axarr[0][2].imshow(grid3.transpose((1,2,0)))
+        axarr[1][0].imshow(grid4.transpose((1,2,0)))
+        axarr[1][1].imshow(grid5.transpose((1,2,0)))
+        axarr[1][2].imshow(grid6.transpose((1,2,0)))
         
-        axarr[0].axis("off")
-        axarr[1].axis("off")
-        axarr[2].axis("off")
-        axarr[3].axis("off")
-        axarr[4].axis("off")
+        axarr[0][0].axis("off")
+        axarr[0][1].axis("off")
+        axarr[0][2].axis("off")
+        axarr[1][0].axis("off")
+        axarr[1][1].axis("off")
+        axarr[1][2].axis("off")
+        
         plt.tight_layout()
-        fig.suptitle('T-k ------> 0',fontweight ="bold") 
+        fig.suptitle('T ------> 0',fontweight ="bold") 
         fig.savefig(grid_name)
         plt.close(fig)
        
