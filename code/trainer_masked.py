@@ -47,7 +47,7 @@ class Trainer:
     def _mask_schedule(self, timesteps):
         if self.args.ddpm_schedule == 'linear':
             # black_area_ratio    = list(map(int, timesteps / (self.args.ddpm_num_steps+1)))
-            black_area_ratio    = timesteps / (self.args.ddpm_num_steps+1)
+            black_area_ratio    = timesteps / self.args.ddpm_num_steps
         else:
             pass
 
@@ -101,6 +101,8 @@ class Trainer:
         # Create a mask with a random area black and obtation generator prediction
         # ===================================================================================
         timesteps           = torch.randint(low=1, high=self.args.ddpm_num_steps+1, size=(img.shape[0],), device=img.device)
+        timesteps_count     = torch.bincount(timesteps, minlength=self.args.ddpm_num_steps+1)[1:]
+        T_steps             = torch.where(timesteps == self.args.ddpm_num_steps)
         black_area_ratio    = self._mask_schedule(timesteps)
         
         noise               = self._generate_random_mask(img.shape[0], img.shape[2], img.shape[3], black_area_ratio).to(img.device).to(self.args.weight_dtype)
@@ -138,29 +140,43 @@ class Trainer:
         lr  = self.lr_scheduler.get_last_lr()[0]
         self.accelerator.wait_for_everyone()
         
+        black_image_index = None
+        if len(T_steps[0]) > 0:
+            black_image_index   = T_steps[0]
                     
         img_set = [img, noise, noisy_img, mask, prediction]
         
-        return img_set, loss.item()
+        return img_set, loss.item(), timesteps_count, black_image_index
 
 
     def _run_epoch(self, epoch: int, epoch_length: int, resume_step: int, global_step: int, dirs: dict):
-        loss_batch        = []
+        loss_batch              = []
+        epoch_timesteps_count   = torch.zeros(self.args.ddpm_num_steps, dtype=torch.int)
         
         # for i, (input, saliency) in enumerate(tqdm(self.dataloader, desc='batch', leave=False, position=1, bar_format='{desc:<5.5}{percentage:3.0f}%|{bar:50}{r_bar}')):
         batch_progress_bar   = tqdm(total=len(self.dataloader), disable=not self.accelerator.is_local_main_process, leave=False)
         batch_progress_bar.set_description(f"Batch ")
+        
+        black_image_set = [[],[],[],[],[]]
         for i, input in enumerate(self.dataloader, 0):
             
-            img_set, loss = self._run_batch(i, input, epoch, epoch_length, resume_step, global_step, dirs)
+            img_set, loss, batch_timesteps_count, black_index = self._run_batch(i, input, epoch, epoch_length, resume_step, global_step, dirs)
             batch_progress_bar.update(1)
             
             # if self.accelerator.is_main_process and (i+1) % self.args.save_images_batch == 0:
             #     self._save_result_image(dirs, img_set, epoch)
             loss_batch.append(loss)
+            epoch_timesteps_count += batch_timesteps_count.cpu()
+            
+            if len(black_image_set[0]) < self.args.batch_size and black_index is not None:
+                black_image_set[0].append(img_set[0][black_index])
+                black_image_set[1].append(img_set[2][black_index])
+                black_image_set[2].append(img_set[3][black_index])
+                black_image_set[3].append(img_set[4][black_index])
+                black_image_set[4].append(img_set[1][black_index])
 
         batch_progress_bar.close()
-        return img_set, loss_batch
+        return img_set, loss_batch, epoch_timesteps_count, black_image_set
     
     
     def train(self, epoch_start: int, epoch_length: int, resume_step: int, global_step: int, dirs: dict):
@@ -178,7 +194,7 @@ class Trainer:
         epoch_progress_bar.set_description(f"Epoch ")
         for epoch in range(epoch_start,epoch_length):
             start = timer()
-            img_set, loss = self._run_epoch(epoch, epoch_length, resume_step, global_step, dirs)
+            img_set, loss, timesteps_count, black_image_set = self._run_epoch(epoch, epoch_length, resume_step, global_step, dirs)
             
             end = timer()
             elapsed_time = end - start
@@ -196,8 +212,10 @@ class Trainer:
     
                 # self._save_model(dirs, epoch+1)
                 self._save_result_image(dirs, img_set, epoch)
+                self._save_black_image(dirs, black_image_set, epoch)
                 self._save_sample(dirs, epoch)
                 self._save_learning_curve(dirs, loss_mean_epoch, loss_std_epoch, epoch)
+                self._save_time_step(dirs, timesteps_count, epoch)
                 # self._save_log(dirs)
                 # self.log = ''
         # self._save_loss(dirs, loss_generator_mean_epoch, loss_generator_std_epoch, loss_discriminator_mean_epoch, loss_discriminator_std_epoch)
@@ -273,6 +291,53 @@ class Trainer:
         plt.tight_layout()
         fig.savefig(img_final)
         plt.close(fig)
+        
+    def _save_black_image(self, dirs, img, epoch):
+        input       = torch.cat(img[0], dim=0)    # input image
+        noisy       = torch.cat(img[1], dim=0)    # noise * input
+        mask        = torch.cat(img[2], dim=0)    # output of model
+        predict     = torch.cat(img[3], dim=0)    # output of model + noisy image
+        noise       = torch.cat(img[4], dim=0)    # noise
+        batch_size  = input.shape[0]
+        nrow        = int(np.ceil(np.sqrt(batch_size)))
+        
+        grid_input          = make_grid(input, nrow=nrow, normalize=True)
+        grid_noisy          = make_grid(noisy, nrow=nrow, normalize=True)
+        grid_mask           = make_grid(mask, nrow=nrow, normalize=True)
+        grid_final          = make_grid(predict, nrow=nrow, normalize=True)
+        grid_noise          = make_grid(noise, nrow=nrow, normalize=True)
+        
+        img_dir_save        = dirs.list_dir['black_res_img']
+        img_final           = 'black_epoch_{:05d}.png'.format(epoch)
+        img_final           = os.path.join(img_dir_save, img_final)
+        grid_input          = (grid_input.cpu().numpy() * 255).round().astype("uint8")
+        grid_noisy          = (grid_noisy.cpu().numpy() * 255).round().astype("uint8")
+        grid_mask           = (grid_mask.cpu().numpy() * 255).round().astype("uint8")
+        grid_final          = (grid_final.cpu().numpy() * 255).round().astype("uint8")
+        grid_noise          = (grid_noise.cpu().numpy() * 255).round().astype("uint8")
+        # grid_sample         = (grid_sample.cpu().numpy() * 255).round().astype("uint8")
+        
+        fig, axarr = plt.subplots(1,5) 
+        axarr[0].imshow(grid_input.transpose((1,2,0)))
+        axarr[1].imshow(grid_noise.transpose((1,2,0)))
+        axarr[2].imshow(grid_noisy.transpose((1,2,0)))
+        axarr[3].imshow(grid_mask.transpose((1,2,0)))
+        axarr[4].imshow(grid_final.transpose((1,2,0)))
+        
+        axarr[0].set_title("input")
+        axarr[1].set_title("noise")
+        axarr[2].set_title("noisy")
+        axarr[3].set_title("output")
+        axarr[4].set_title("output + noisy")
+        
+        axarr[0].axis("off")
+        axarr[1].axis("off")
+        axarr[2].axis("off")
+        axarr[3].axis("off")
+        axarr[4].axis("off")
+        plt.tight_layout()
+        fig.savefig(img_final)
+        plt.close(fig)
                     
 
     def _save_learning_curve(self, dirs, loss_mean, loss_std, epoch: int):
@@ -282,10 +347,30 @@ class Trainer:
         file_loss = os.path.join(dir_save, file_loss)
         fig = plt.figure()
         
-        plt.subplot(1,2,1)
+        plt.subplot(1,1,1)
         plt.plot(np.array(loss_mean), color='red')
         plt.fill_between(list(range(len(loss_mean))), np.array(loss_mean)-np.array(loss_std), np.array(loss_mean)+np.array(loss_std), color='blue', alpha=0.2)
         plt.title('loss')
+        
+        plt.tight_layout()
+        plt.savefig(file_loss, bbox_inches='tight', dpi=100)
+        plt.close(fig)
+        
+        
+    def _save_time_step(self, dirs, time_step, epoch: int):
+        dir_save    = dirs.list_dir['time_step'] 
+        # file_loss = 'loss_epoch_{:05d}.png'.format(epoch)
+        file_loss = 'time_step_{}.png'.format(epoch)
+        file_loss = os.path.join(dir_save, file_loss)
+        
+        time_step   = np.array(time_step)
+        time        = range(1, len(time_step) + 1)
+        
+        fig = plt.figure()
+        
+        plt.subplot(1,1,1)
+        plt.plot(time, time_step, color='red')
+        plt.title('number of time step')
         
         plt.tight_layout()
         plt.savefig(file_loss, bbox_inches='tight', dpi=100)

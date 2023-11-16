@@ -10,7 +10,7 @@ data_set="train"
 data_size=64
 date=""
 time=""
-title="time_step_1000"
+title="time_step_1000_lr_constant"
 # ==============================
 model=default
 batch_size=16

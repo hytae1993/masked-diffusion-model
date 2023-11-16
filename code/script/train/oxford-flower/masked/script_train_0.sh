@@ -10,11 +10,11 @@ data_set="train"
 data_size=64
 date=""
 time=""
-title="time_step_10"
+title="time_step_100"
 # ==============================
 model=default
-batch_size=16
-num_epochs=100
+batch_size=48
+num_epochs=1000
 optim="adam"
 lr=1e-4
 lr_scheduler="cosine"
@@ -32,7 +32,7 @@ ema_max_decay=0.9999
 
 
 mixed_precision="fp16"
-ddpm_num_steps=10
+ddpm_num_steps=100
 ddpm_schedule="linear"
 checkpointing_steps=500
 save_images_epochs=1

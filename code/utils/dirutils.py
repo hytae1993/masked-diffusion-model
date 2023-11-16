@@ -78,10 +78,11 @@ class Dir:
             'noise_img'     : os.path.join(save_dir, 'train', 'image', 'noise_image'),
             'noisy_img'     : os.path.join(save_dir, 'train', 'image', 'noisy_image'),
             'predict_img'   : os.path.join(save_dir, 'train', 'image', 'predict_image'),
+            'black_res_img' : os.path.join(save_dir, 'train', 'image', 'black_res_image'),
             'sample_img'    : os.path.join(save_dir, 'train', 'image', 'sample_image'),
             'sample_grid'   : os.path.join(save_dir, 'train', 'image', 'sample_grid'),
             'train_loss'    : os.path.join(save_dir, 'train', 'loss'),
-            'train_pred'    : os.path.join(save_dir, 'train', 'prediction'),
+            'time_step'     : os.path.join(save_dir, 'train', 'time_step'),
             'log'           : os.path.join(save_dir, 'log'),
             'model'         : os.path.join(save_dir, 'model'),
             'option'        : os.path.join(save_dir, 'option'),
@@ -95,10 +96,11 @@ class Dir:
         os.makedirs(dir_list['noise_img'], exist_ok=True)
         os.makedirs(dir_list['noisy_img'], exist_ok=True)
         os.makedirs(dir_list['predict_img'], exist_ok=True)
+        os.makedirs(dir_list['black_res_img'], exist_ok=True)
         os.makedirs(dir_list['sample_img'], exist_ok=True)
         os.makedirs(dir_list['sample_grid'], exist_ok=True)
         os.makedirs(dir_list['train_loss'], exist_ok=True)
-        os.makedirs(dir_list['train_pred'], exist_ok=True)
+        os.makedirs(dir_list['time_step'], exist_ok=True)
         os.makedirs(dir_list['log'], exist_ok=True)
         os.makedirs(dir_list['model'], exist_ok=True)
         os.makedirs(dir_list['option'], exist_ok=True)
