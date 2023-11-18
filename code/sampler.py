@@ -27,10 +27,12 @@ class Sampler:
     def __init__(self, 
                 dataset: Dataset, 
                 args,
+                Mask,
                 ):
 
         self.dataset        = dataset
-        self.args           = args     
+        self.args           = args 
+        self.Mask           = Mask
       
         '''
         if evaluate: 
@@ -85,50 +87,6 @@ class Sampler:
         return inception_score
     '''
     
-    def _mask_schedule(self, timesteps):
-        if self.args.ddpm_schedule == 'linear':
-            # black_area_ratio    = list(map(int, timesteps / (self.args.ddpm_num_steps+1)))
-            black_area_ratio    = timesteps / (self.args.ddpm_num_steps+1)
-        else:
-            pass
-
-        return black_area_ratio
-
-    def _generate_random_mask(self, batch_size, height, width, black_area_ratios):
-        """
-        Generate random masks with black areas for each channel in the batch.
-
-        Parameters:
-        - batch_size: Number of masks to generate.
-        - height: Height of each mask.
-        - width: Width of each mask.
-        - black_area_ratios: List of ratios for the mask area to be black for each channel.
-
-        Returns:
-        - masks: Binary masks with black areas, shape (batch_size, 1, height, width).
-        """
-
-        masks = torch.ones((batch_size, 1, height, width), dtype=torch.float32)
-
-        for i in range(batch_size):
-            # Get black area ratio for the current channel
-            black_area_ratio = black_area_ratios[i]
-
-            # Determine the number of pixels to black out
-            num_black_pixels = int(black_area_ratio * height * width)
-
-            # Randomly select pixels to black out
-            black_pixels = random.sample(range(height * width), num_black_pixels)
-
-            # Convert 1D indices to 2D coordinates
-            black_pixels = [(idx // width, idx % width) for idx in black_pixels]
-
-            # Set the selected pixels to black for the current channel
-            for j, k in black_pixels:
-                masks[i, 0, j, k] = 0.0
-
-        return masks
-
     def _get_latent_initial(self, model: Module):
         time_length = self.args.ddpm_num_steps
         time_length = torch.Tensor([time_length])
@@ -149,7 +107,7 @@ class Sampler:
 
 
     def _sample(self, model: Module):
-        time_length = self.args.ddpm_num_steps
+        time_length = self.args.updated_ddpm_num_steps
       
         latent      = self._get_latent_initial(model)
         sample      = latent.to(model.device)
@@ -175,8 +133,11 @@ class Sampler:
                     sample  = prediction
                     sample_list.append(sample)
                 else:
-                    black_area_ratio    = self._mask_schedule(time-1)
-                    noise               = self._generate_random_mask(self.args.batch_size, self.args.data_size, self.args.data_size, black_area_ratio).to(model.device)
+                    # black_area_ratio    = self._mask_schedule(time-1)
+                    # noise               = self._generate_random_mask(self.args.batch_size, self.args.data_size, self.args.data_size, black_area_ratio).to(model.device)
+                    black_area_ratio    = self.Mask.get_list_black_area_ratios(time-1)
+                    noise               = self.Mask.get_mask(black_area_ratio)
+                    noise               = noise.to(model.device)
                     sample              = prediction * noise
                     
                 if t in sample_t:

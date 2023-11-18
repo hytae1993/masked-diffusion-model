@@ -236,7 +236,6 @@ def main(dirs: dict, args: dict):
     accelerator = get_accelerator(args, ema_model)
     get_weight_type(args, accelerator)
     
-    noise_scheduler = get_noise_scheduler()
     optimizer       = get_optimizer(model, args.optim, args.lr)
     lr_scheduler    = get_lr_scheduler(args.lr_scheduler, optimizer, dataloader, args.lr_warmup_steps, args.gradient_accumulation_steps, args.num_epochs)
     
@@ -258,7 +257,7 @@ def main(dirs: dict, args: dict):
     else:
         global_step, first_epoch, resume_step  = 0, 0, 0
         
-    trainer = Trainer(args, dataloader, model, ema_model, optimizer, lr_scheduler, noise_scheduler, accelerator)
+    trainer = Trainer(args, dataloader, model, ema_model, optimizer, lr_scheduler, accelerator)
     trainer.train(first_epoch, args.num_epochs, resume_step, global_step, dirs)
  
 
@@ -319,6 +318,7 @@ if __name__ == '__main__':
     # parser.add_argument('--channelwise_scale', help='channelwise scaling', type=eval, default=False, choices=[True, False])
     parser.add_argument('--mixed_precision', help='use mixed precision', type=str, default="no", choices=["no", "fp16", "bf16"],)
     parser.add_argument('--ddpm_num_steps', type=int, default=1000)
+    parser.add_argument('--updated_ddpm_num_steps', help='removed duplicated time step after time scheduling', type=int, default=1000)
     parser.add_argument("--ddpm_schedule", type=str, default="linear")
     parser.add_argument("--checkpointing_steps", type=int, default=500)
     parser.add_argument("--save_images_epochs", type=int, default=10)
