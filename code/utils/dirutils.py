@@ -81,6 +81,7 @@ class Dir:
             'black_res_img' : os.path.join(save_dir, 'train', 'image', 'black_res_image'),
             'sample_img'    : os.path.join(save_dir, 'train', 'image', 'sample_image'),
             'sample_grid'   : os.path.join(save_dir, 'train', 'image', 'sample_grid'),
+            'sample_random' : os.path.join(save_dir, 'train', 'image', 'sample_random'),
             'inference_grid': os.path.join(save_dir, 'train', 'image', 'inference_grid'),
             'train_loss'    : os.path.join(save_dir, 'train', 'loss'),
             'time_step'     : os.path.join(save_dir, 'train', 'time_step'),
@@ -100,6 +101,7 @@ class Dir:
         os.makedirs(dir_list['black_res_img'], exist_ok=True)
         os.makedirs(dir_list['sample_img'], exist_ok=True)
         os.makedirs(dir_list['sample_grid'], exist_ok=True)
+        os.makedirs(dir_list['sample_random'], exist_ok=True)
         os.makedirs(dir_list['inference_grid'], exist_ok=True)
         os.makedirs(dir_list['train_loss'], exist_ok=True)
         os.makedirs(dir_list['time_step'], exist_ok=True)

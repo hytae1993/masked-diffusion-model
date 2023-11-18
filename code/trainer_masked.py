@@ -128,7 +128,9 @@ class Trainer:
             batch_progress_bar.update(1)
             
             if self.accelerator.is_main_process:
-            #     self._save_result_image(dirs, img_set, epoch)
+                
+                # self._save_sample_random_t(dirs, img_set[0], epoch)
+                
                 loss_batch.append(loss)
                 epoch_timesteps_count += batch_timesteps_count.cpu()
                 
@@ -173,21 +175,21 @@ class Trainer:
             elapsed_time = end - start
             epoch_progress_bar.update(1)
  
-            loss_mean     = statistics.mean(loss)
-            loss_std      = statistics.stdev(loss, loss_mean)
-
-            if epoch > 0:
-                loss_mean_epoch.append(loss_mean)
-                loss_std_epoch.append(loss_std)
-            
             
             if self.accelerator.is_main_process:
+                loss_mean     = statistics.mean(loss)
+                loss_std      = statistics.stdev(loss, loss_mean)
+
+                if epoch > 0:
+                    loss_mean_epoch.append(loss_mean)
+                    loss_std_epoch.append(loss_std)
     
                 # self._save_model(dirs, epoch+1)
                 self._save_result_image(dirs, img_set, epoch)
                 self._save_inference_image(dirs, inference_image_set, epoch)
                 self._save_black_image(dirs, black_image_set, epoch)
                 self._save_sample(dirs, epoch)
+                self._save_sample_random_t(dirs, img_set[0], epoch)
                 self._save_learning_curve(dirs, loss_mean_epoch, loss_std_epoch, epoch)
                 self._save_time_step(dirs, timesteps_count, rate, epoch)
                 # self._save_log(dirs)
@@ -215,12 +217,12 @@ class Trainer:
         batch_size          = input.shape[0]
         nrow                = int(np.ceil(np.sqrt(batch_size)))
         
-        grid_input          = make_grid(input, nrow=nrow, normalize=True)
-        grid_predict        = make_grid(prediction, nrow=nrow, normalize=True)
-        grid_new_predict    = make_grid(new_prediction, nrow=nrow, normalize=True)
-        grid_noise          = make_grid(noise, nrow=nrow, normalize=True)
-        grid_noisy          = make_grid(noisy_img, nrow=nrow, normalize=True)
-        grid_mask           = make_grid(mask, nrow=nrow, normalize=True)
+        grid_input          = make_grid(input, nrow=nrow, normalize=False)
+        grid_predict        = make_grid(prediction, nrow=nrow, normalize=False)
+        grid_new_predict    = make_grid(new_prediction, nrow=nrow, normalize=False)
+        grid_noise          = make_grid(noise, nrow=nrow, normalize=False)
+        grid_noisy          = make_grid(noisy_img, nrow=nrow, normalize=False)
+        grid_mask           = make_grid(mask, nrow=nrow, normalize=False)
         
         inf_final           = 'inference_epoch_{:05d}.png'.format(epoch)
         inf_final           = os.path.join(inf_dir_save, inf_final)
@@ -270,31 +272,31 @@ class Trainer:
         input_dir_save      = dirs.list_dir['train_img'] 
         file_input          = 'input_epoch_{:05d}.png'.format(epoch)
         file_input          = os.path.join(input_dir_save, file_input)
-        grid_input          = make_grid(input, nrow=nrow, normalize=True)
+        grid_input          = make_grid(input, nrow=nrow, normalize=False)
         save_image(grid_input, file_input)
         
         noise_dir_save      = dirs.list_dir['noise_img']
         file_noise          = 'noise_epoch_{:05d}.png'.format(epoch)
         file_noise          = os.path.join(noise_dir_save, file_noise)
-        grid_noise          = make_grid(noise, nrow=nrow, normalize=True)
+        grid_noise          = make_grid(noise, nrow=nrow, normalize=False)
         save_image(grid_noise, file_noise)
         
         noisy_dir_save      = dirs.list_dir['noisy_img']
         file_noisy          = 'noise_epoch_{:05d}.png'.format(epoch)
         file_noisy          = os.path.join(noisy_dir_save, file_noisy)
-        grid_noisy          = make_grid(noisy, nrow=nrow, normalize=True)
+        grid_noisy          = make_grid(noisy, nrow=nrow, normalize=False)
         save_image(grid_noisy, file_noisy)
         
         mask_dir_save       = dirs.list_dir['mask_img']
         file_mask           = 'mask_epoch_{:05d}.png'.format(epoch)
         file_mask           = os.path.join(mask_dir_save, file_mask)
-        grid_mask           = make_grid(mask, nrow=nrow, normalize=True)
+        grid_mask           = make_grid(mask, nrow=nrow, normalize=False)
         save_image(grid_mask, file_mask)
         
         predict_dir_save    = dirs.list_dir['predict_img']
         file_final          = 'predict_epoch_{:05d}.png'.format(epoch)
         file_final          = os.path.join(predict_dir_save, file_final)
-        grid_final          = make_grid(predict, nrow=nrow, normalize=True)
+        grid_final          = make_grid(predict, nrow=nrow, normalize=False)
         save_image(grid_final, file_final)
         
         img_dir_save        = dirs.list_dir['img']
@@ -338,11 +340,11 @@ class Trainer:
         batch_size  = input.shape[0]
         nrow        = int(np.ceil(np.sqrt(batch_size)))
         
-        grid_input          = make_grid(input, nrow=nrow, normalize=True)
-        grid_noisy          = make_grid(noisy, nrow=nrow, normalize=True)
-        grid_mask           = make_grid(mask, nrow=nrow, normalize=True)
-        grid_final          = make_grid(predict, nrow=nrow, normalize=True)
-        grid_noise          = make_grid(noise, nrow=nrow, normalize=True)
+        grid_input          = make_grid(input, nrow=nrow, normalize=False)
+        grid_noisy          = make_grid(noisy, nrow=nrow, normalize=False)
+        grid_mask           = make_grid(mask, nrow=nrow, normalize=False)
+        grid_final          = make_grid(predict, nrow=nrow, normalize=False)
+        grid_noise          = make_grid(noise, nrow=nrow, normalize=False)
         
         img_dir_save        = dirs.list_dir['black_res_img']
         img_final           = 'black_epoch_{:05d}.png'.format(epoch)
@@ -471,6 +473,38 @@ class Trainer:
         #         sampler._save_image_grid(sample_interp_trial, dir_save, file_save_interp)
         #    ''' 
  
+ 
+    def _save_sample_random_t(self, dirs, img, epoch):
+        dir_save    = dirs.list_dir['sample_random'] 
+        sampler     = Sampler(self.dataloader, self.args, self.Mask)
+
+        sample_list = sampler.sample_random_t(img, self.model.eval())
+        sample_list = torch.cat(sample_list, dim=0)
+        # sample      = normalize01(sample)
+        file_save       = 'sample_random_t_{:05d}.png'.format(epoch)
+        file_save       = os.path.join(dir_save, file_save)
+        
+        nrow        = int(np.ceil(np.sqrt(len(sample_list))))
+        grid        = make_grid(sample_list, nrow=nrow, normalize=False)
+        save_image(grid, file_save)
+        
+        # num_subplots    = len(sample_list)
+        # num_rows        = int(num_subplots ** 0.5)
+        # num_cols        = (num_subplots + num_rows - 1) // num_rows
+        # fig, axs        = plt.subplots(num_rows, num_cols)
+        # axs             = axs.flatten()
+        # for i, (image, ax) in enumerate(zip(sample_list, axs)):
+        #     image   = make_grid(image, nrow=1, normalize=False)
+        #     image   = (image.cpu().numpy()*255).round().astype("uint8")
+        #     image   = image.transpose((1,2,0))
+        #     ax.imshow(image)
+        #     ax.set_title(f'Time {i}')
+        #     ax.axis("off")
+        # plt.tight_layout()
+        # fig.savefig(file_save)
+        # plt.show()
+        # plt.close(fig)
+        
     def _save_model(self, dirs: dict, epoch: int):
         filename    = 'model_epoch_{:05d}.pth'.format(epoch)
         dir_save    = dirs.list_dir['model'] 

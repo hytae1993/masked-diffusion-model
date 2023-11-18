@@ -147,8 +147,56 @@ class Sampler:
             # sample_progress_bar.clear()
             sample_progress_bar.close()
 
-        return sample, sample_list 
+        return sample, sample_list
     
+    
+    def sample_random_t(self, img: torch.Tensor, model: Module):
+        sample_list = self._sample_random_t(img[0], model)
+        return sample_list
+    
+    
+    def _sample_random_t(self, img: torch.Tensor, model: Module):
+        # img         = img.unsqueeze(dim=0)
+        sample_list = [img.unsqueeze(dim=0)]
+        time_length = self.args.updated_ddpm_num_steps
+        # time_length = 5
+        
+        with torch.no_grad():
+            sample_random_t_progress_bar    = tqdm(total=time_length, leave=False)
+            sample_random_t_progress_bar.set_description(f"Sampling random t")
+            for sampleTime in range(1, time_length+1):
+                
+                t_noisy = self._get_noisy(sampleTime, img, model)
+                
+                for time in range(sampleTime, 0, -1):
+                    time                = torch.Tensor([time])
+                    
+                    mask                = model(t_noisy, time.to(model.device)).sample
+                    prediction          = mask + t_noisy
+                    
+                    if time == 1:
+                        sample  = prediction
+                        sample_list.append(sample)
+                    
+                    else:
+                        t_noisy = self._get_noisy(sampleTime-1, prediction, model)
+
+                sample_random_t_progress_bar.update(1)
+        sample_random_t_progress_bar.close()
+            
+        return sample_list
+                
+    
+    def _get_noisy(self, time: int, img: torch.Tensor, model: Module):
+        time                = torch.tensor([time])
+        # time                = torch.Tensor(time, device=model.device)
+                
+        black_area_ratio    = self.Mask.get_list_black_area_ratios(time)
+        noise               = self.Mask.get_mask(black_area_ratio)
+        noise               = noise.to(model.device)
+        sample              = img * noise
+        
+        return sample
 
     def eval(self, model_info: dict, model: Module, num_batch: int):
         dim_channel = model_info['dim_channel']

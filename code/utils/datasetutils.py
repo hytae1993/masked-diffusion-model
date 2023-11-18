@@ -14,7 +14,7 @@ def DatasetUtils(data_path: str, data_name: str, data_set: str, data_height: int
     transform_RGB = torchvision.transforms.Compose([ 
         torchvision.transforms.Resize([data_height, data_width]),
         torchvision.transforms.ToTensor(),
-        torchvision.transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+        # torchvision.transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
         ])
     transform_GRAY = torchvision.transforms.Compose([ 
         torchvision.transforms.Resize([data_height, data_width]),

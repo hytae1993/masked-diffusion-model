@@ -26,9 +26,9 @@ class Mask(nn.Module):
         Returns:
         - masks: Binary masks with black areas, shape (batch_size, 1, height, width).
         """
-        masks = torch.ones((self.batch_size, 1, self.height, self.width), dtype=torch.float32)
+        masks = torch.ones((len(black_area_ratios), 1, self.height, self.width), dtype=torch.float32)
 
-        for i in range(self.batch_size):
+        for i in range(len(black_area_ratios)):
             num_black_pixels = black_area_ratios[i].int()
 
             black_pixels = random.sample(range(self.height * self.width), num_black_pixels)
