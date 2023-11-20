@@ -1,6 +1,6 @@
 
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, Subset
 import torch.optim as optim
 
 import argparse
@@ -24,15 +24,24 @@ from packaging import version
 
 import diffusers
 from diffusers import DDPMPipeline, DDPMScheduler, UNet2DModel
-from diffusers.optimization import get_scheduler
+from diffusers.optimization import get_scheduler, get_cosine_schedule_with_warmup, get_constant_schedule_with_warmup, get_linear_schedule_with_warmup
 from diffusers.training_utils import EMAModel
+
 
 from trainer_masked import Trainer
 import utils.datasetutils as datasetutils
+import utils.datasetutilsHugging as datasetHugging
 import utils.dirutils as dirutils
 
-def get_dataset(data_path: str, data_name: str, data_set: str,  data_height: int, data_width: int):
-    dataset = datasetutils.DatasetUtils(data_path, data_name, data_set, data_height, data_width)
+def get_dataset(data_path: str, data_name: str, data_set: str,  data_height: int, data_width: int, data_subset: bool, data_subset_num: int):
+    
+    if 'hugging' in data_path:
+        # datset using huggingface
+        dataset = datasetHugging.DatasetUtils(data_path, data_name, data_set, data_height, data_width, data_subset, data_subset_num)
+    else:
+        # dataset using torch
+        dataset = datasetutils.DatasetUtils(data_path, data_name, data_set, data_height, data_width, data_subset, data_subset_num)
+    
     return dataset
  
 
@@ -51,8 +60,8 @@ def get_model(args: dict):
     if args.model == 'default':
         model   = UNet2DModel(
             sample_size=args.data_size,
-            in_channels=3,
-            out_channels=3,
+            in_channels=args.in_channel,
+            out_channels=args.out_channel,
             layers_per_block=2,
             block_out_channels=(128, 128, 256, 256, 512, 512),
             down_block_types=(
@@ -106,14 +115,24 @@ def get_optimizer(model, optim_name: str, lr: float):
     return optimizer
 
 
-def get_lr_scheduler(scheduler_name: str, optimizer: optim.Optimizer, dataloader: DataLoader, lr_warmup_steps, gradient_accumulation_steps, num_epochs):
+def get_lr_scheduler(scheduler_name: str, optimizer: optim.Optimizer, dataloader: DataLoader, lr_warmup_steps, gradient_accumulation_steps, num_epochs, num_cycles):
     '''
     Choose between ["linear", "cosine", "cosine_with_restarts", "polynomial", "constant", "constant_with_warmup"]'
     '''
-    scheduler    = get_scheduler(
-        scheduler_name, optimizer, num_warmup_steps=lr_warmup_steps * gradient_accumulation_steps, num_training_steps=(len(dataloader)*num_epochs)
-    )
+    if scheduler_name == "cosine":
+        scheduler   = get_cosine_schedule_with_warmup(optimizer, num_warmup_steps=lr_warmup_steps * gradient_accumulation_steps, num_training_steps=len(dataloader)*num_epochs, num_cycles=num_cycles)
+
+    elif scheduler_name == "constant":
+        scheduler   = get_constant_schedule_with_warmup(optimizer, num_warmup_steps=lr_warmup_steps * gradient_accumulation_steps)
         
+    elif scheduler_name == "linear":
+        scheduler   = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=lr_warmup_steps * gradient_accumulation_steps, num_training_steps=len(dataloader)*num_epochs)
+        
+    
+    # scheduler    = get_scheduler(
+    #     scheduler_name, optimizer, num_warmup_steps=lr_warmup_steps * gradient_accumulation_steps, num_training_steps=(len(dataloader)*num_epochs)
+    # )
+    
     return scheduler 
 
 
@@ -222,22 +241,32 @@ def resume_train(args, accelerator, num_update_steps_per_epoch):
         resume_global_step  = global_step * args.gradient_accumulation_steps
         first_epoch         = global_step // num_update_steps_per_epoch
         resume_step         = resume_global_step % (num_update_steps_per_epoch * args.gradient_accumulation_steps)
+    
+    # path    = '/nas/users/hyuntae/code/doctor/masked-diffusion-model/result/code_test/oxford-flower/2023_11_18_23_21_15/time_step_100_modelTime/model/model_epoch_02401'
+    # accelerator.print(f"Resuming from checkpoint {path}")
+    # accelerator.load_state(path)
+    # global_step = int(path.split("-")[1])
+
+    # resume_global_step  = global_step * args.gradient_accumulation_steps
+    # first_epoch         = global_step // num_update_steps_per_epoch
+    # resume_step         = resume_global_step % (num_update_steps_per_epoch * args.gradient_accumulation_steps)
         
     return global_step, first_epoch, resume_step
 
     
 def main(dirs: dict, args: dict):
     
-    dataset     = get_dataset(args.dir_dataset, args.data_name, args.data_set, args.data_size, args.data_size)
+    dataset     = get_dataset(args.dir_dataset, args.data_name, args.data_set, args.data_size, args.data_size, args.data_subset, args.data_subset_num)
     dataloader  = get_dataloader(dataset, args.batch_size, args.num_workers)
     
     model       = get_model(args)
     ema_model   = get_ema(args, model)
     accelerator = get_accelerator(args, ema_model)
+    
     get_weight_type(args, accelerator)
     
     optimizer       = get_optimizer(model, args.optim, args.lr)
-    lr_scheduler    = get_lr_scheduler(args.lr_scheduler, optimizer, dataloader, args.lr_warmup_steps, args.gradient_accumulation_steps, args.num_epochs)
+    lr_scheduler    = get_lr_scheduler(args.lr_scheduler, optimizer, dataloader, args.lr_warmup_steps, args.gradient_accumulation_steps, args.num_epochs, args.lr_cycle)
     
     model, optimizer, dataloader, lr_scheduler  = accelerator.prepare(model, optimizer, dataloader, lr_scheduler)
     if args.use_ema:
@@ -257,6 +286,7 @@ def main(dirs: dict, args: dict):
     else:
         global_step, first_epoch, resume_step  = 0, 0, 0
         
+    # accelerator.load_state('/nas/users/hyuntae/code/doctor/masked-diffusion-model/result/code_test/oxford-flower/2023_11_18_23_21_15/time_step_100_modelTime/model/model_epoch_02401')
     trainer = Trainer(args, dataloader, model, ema_model, optimizer, lr_scheduler, accelerator)
     trainer.train(first_epoch, args.num_epochs, resume_step, global_step, dirs)
  
@@ -281,17 +311,22 @@ if __name__ == '__main__':
     parser.add_argument('--data_name', help='name of the dataset', type=str, default='mnist')
     parser.add_argument('--data_set', help='name of the subset of the dataset', type=str, default='train')
     parser.add_argument('--data_size', help='size of the data', type=int, default=64)
+    parser.add_argument('--data_subset', help='using data subset', type=eval, default=False)
+    parser.add_argument('--data_subset_num', help='number of data subset', type=int, default=1000)
     parser.add_argument('--date', help='date of the program execution', type=str, default='')
     parser.add_argument('--time', help='time of the program execution', type=str, default='')
     parser.add_argument('--title', help='title of experiment', type=str, default='')
     # ======================================================================
     parser.add_argument('--model', help='name of the neural network', type=str, default='default')
     parser.add_argument('--batch_size', help='mini-batch size', type=int, default=128)
+    parser.add_argument('--in_channel', help='number of channel of input', type=int, default=3)
+    parser.add_argument('--out_channel', help='number of channel of output', type=int, default=3)
     parser.add_argument('--num_epochs', help='number of epochs', type=int, default=1000)
     parser.add_argument('--optim', help='name of the optimizer', type=str, choices=(['adam', 'adamw', 'sgd']), default='adamw')
     parser.add_argument('--lr', help='learning rate (maximum)', type=float, default=1e-4)
     parser.add_argument('--lr_scheduler', help='learning rate scheduler', type=str, default='linear')
     parser.add_argument('--lr_warmup_steps', help='number of steps for the warmup in the lr scheduler', type=int, default=500)
+    parser.add_argument('--lr_cycle', help='number of cycle of the lr scheduler', type=float, default=0.5)
     parser.add_argument('--gradient_accumulation_steps', help='number of updates steps to accumulate before performing a backward/update pass', type=int, default=1)
     parser.add_argument('--sample_num', help='number of samples during the training', type=int, default=100)
     parser.add_argument('--sample_epoch_ratio', help='ratio of the epoch length for the training', type=float, default=0.2)

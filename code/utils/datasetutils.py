@@ -4,13 +4,13 @@ from torch.utils.data import Dataset
 from os import listdir
 from os import walk
 from os.path import join
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 import numpy as np
 import re
 from PIL import Image
 
 
-def DatasetUtils(data_path: str, data_name: str, data_set: str, data_height: int, data_width: int):
+def DatasetUtils(data_path: str, data_name: str, data_set: str, data_height: int, data_width: int, data_subset: bool, data_subset_num: int):
     transform_RGB = torchvision.transforms.Compose([ 
         torchvision.transforms.Resize([data_height, data_width]),
         torchvision.transforms.ToTensor(),
@@ -254,6 +254,10 @@ def DatasetUtils(data_path: str, data_name: str, data_set: str, data_height: int
                 idx_label = np.logical_or(idx_label, dataset.targets == label)
             dataset.data    = dataset.data[idx_label]
             dataset.targets = dataset.targets[idx_label]
+            
+            
+    if data_subset:
+        dataset = Subset(dataset, list(range(0,data_subset_num)))
 
     return dataset
 

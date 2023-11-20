@@ -38,11 +38,14 @@ class Trainer:
         self.ema_model          = ema_model
         self.optimizer          = optimizer
         self.lr_scheduler       = lr_scheduler
+        self.lr_list            = []
         self.accelerator        = accelerator
         
         self.criterion          = nn.MSELoss()
         
         self.Mask               = Mask(args)
+        
+        self.global_step        = 0
         
         
     def _compute_loss(self, prediction: torch.Tensor, target: torch.Tensor):
@@ -50,8 +53,15 @@ class Trainer:
         
         return loss
          
-    def _run_batch(self, batch: int, img: torch.Tensor, epoch: int, epoch_length: int, resume_step: int, global_step: int, dirs: dict):
+    def _run_batch(self, batch: int, input, epoch: int, epoch_length: int, resume_step: int, dirs: dict):
         
+        # print(input)
+        if 'huggingface' in self.args.dir_dataset:
+            img     = input["image"]
+            label   = input["label"]
+        else:
+            img     = input
+            
         img                                 = img.to(self.args.weight_dtype)
         
         # ===================================================================================
@@ -86,16 +96,15 @@ class Trainer:
         if self.accelerator.sync_gradients:
             if self.args.use_ema:
                 self.ema_model.step(self.model.parameters())
-            global_step += 1
+            self.global_step += 1
             
             if self.accelerator.is_main_process:
-                if global_step % self.args.checkpointing_steps == 0:
-                    
-                    save_path   = os.path.join(dirs.list_dir['checkpoint'], f"checkpoint-{global_step}")
+                if self.global_step % self.args.checkpointing_steps == 0:
+                    save_path   = os.path.join(dirs.list_dir['checkpoint'], f"checkpoint-{self.global_step}")
                     self.accelerator.save_state(save_path)
         
-        
         lr  = self.lr_scheduler.get_last_lr()[0]
+        self.lr_list.append(lr)
         self.accelerator.wait_for_everyone()
         
         black_image_index       = None
@@ -112,7 +121,7 @@ class Trainer:
         return img_set, loss.item(), timesteps_count, black_image_index, inference_check_set
 
 
-    def _run_epoch(self, epoch: int, epoch_length: int, resume_step: int, global_step: int, dirs: dict):
+    def _run_epoch(self, epoch: int, epoch_length: int, resume_step: int, dirs: dict):
         loss_batch              = []
         epoch_timesteps_count   = torch.zeros(self.args.updated_ddpm_num_steps, dtype=torch.int)
         
@@ -122,13 +131,13 @@ class Trainer:
         
         black_image_set     = [[],[],[],[],[]]
         inference_image_set = [[],[],[]]
+        
         for i, input in enumerate(self.dataloader, 0):
             
-            img_set, loss, batch_timesteps_count, black_index, inference_set = self._run_batch(i, input, epoch, epoch_length, resume_step, global_step, dirs)
+            img_set, loss, batch_timesteps_count, black_index, inference_set = self._run_batch(i, input, epoch, epoch_length, resume_step, dirs)
             batch_progress_bar.update(1)
             
-            if self.accelerator.is_main_process:
-                
+            if self.accelerator.is_main_process: 
                 # self._save_sample_random_t(dirs, img_set[0], epoch)
                 
                 loss_batch.append(loss)
@@ -163,20 +172,21 @@ class Trainer:
         lr_list_all     = [] 
        
         self.model.train()
+        
+        self.global_step = global_step
        
         # for epoch in tqdm(range(epoch_start,epoch_length), desc='epoch', position=0, bar_format='{desc:<5.5}{percentage:3.0f}%|{bar:50}{r_bar}'):
         epoch_progress_bar   = tqdm(total=epoch_length, disable=not self.accelerator.is_local_main_process)
         epoch_progress_bar.set_description(f"Epoch ")
         for epoch in range(epoch_start,epoch_length):
             start = timer()
-            img_set, loss, timesteps_count, black_image_set, inference_image_set = self._run_epoch(epoch, epoch_length, resume_step, global_step, dirs)
+            img_set, loss, timesteps_count, black_image_set, inference_image_set = self._run_epoch(epoch, epoch_length, resume_step, dirs)
             
             end = timer()
             elapsed_time = end - start
             epoch_progress_bar.update(1)
- 
             
-            if self.accelerator.is_main_process:
+            if (self.accelerator.is_main_process and epoch % (self.args.save_images_epochs//10) == 0) or (self.accelerator.is_main_process and epoch == self.args.num_epochs):
                 loss_mean     = statistics.mean(loss)
                 loss_std      = statistics.stdev(loss, loss_mean)
 
@@ -184,13 +194,18 @@ class Trainer:
                     loss_mean_epoch.append(loss_mean)
                     loss_std_epoch.append(loss_std)
     
-                # self._save_model(dirs, epoch+1)
+                self._save_learning_curve(dirs, loss_mean_epoch, loss_std_epoch, epoch)
+ 
+            
+            if (self.accelerator.is_main_process and epoch % self.args.save_images_epochs == 0) or (self.accelerator.is_main_process and (epoch+1) == self.args.num_epochs):
+            # if (self.accelerator.is_main_process and (epoch+1) == self.args.num_epochs):
+    
+                self._save_model(dirs, epoch+1)
                 self._save_result_image(dirs, img_set, epoch)
                 self._save_inference_image(dirs, inference_image_set, epoch)
                 self._save_black_image(dirs, black_image_set, epoch)
                 self._save_sample(dirs, epoch)
                 self._save_sample_random_t(dirs, img_set[0], epoch)
-                self._save_learning_curve(dirs, loss_mean_epoch, loss_std_epoch, epoch)
                 self._save_time_step(dirs, timesteps_count, rate, epoch)
                 # self._save_log(dirs)
                 # self.log = ''
@@ -227,20 +242,20 @@ class Trainer:
         inf_final           = 'inference_epoch_{:05d}.png'.format(epoch)
         inf_final           = os.path.join(inf_dir_save, inf_final)
         
-        grid_input          = (grid_input.cpu().numpy() * 255).round().astype("uint8")
-        grid_predict        = (grid_predict.cpu().numpy() * 255).round().astype("uint8")
-        grid_new_predict    = (grid_new_predict.cpu().numpy() * 255).round().astype("uint8")
-        grid_noise          = (grid_noise.cpu().numpy() * 255).round().astype("uint8")
-        grid_noisy          = (grid_noisy.cpu().numpy() * 255).round().astype("uint8")
-        grid_mask           = (grid_mask.cpu().numpy() * 255).round().astype("uint8")
+        grid_input          = grid_input.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
+        grid_predict        = grid_predict.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
+        grid_new_predict    = grid_new_predict.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
+        grid_noise          = grid_noise.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
+        grid_noisy          = grid_noisy.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
+        grid_mask           = grid_mask.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
         
-        fig, axarr = plt.subplots(2,3) 
-        axarr[0][0].imshow(grid_input.transpose((1,2,0)))
-        axarr[0][1].imshow(grid_predict.transpose((1,2,0)))
-        axarr[0][2].imshow(grid_new_predict.transpose((1,2,0)))
-        axarr[1][0].imshow(grid_noise.transpose((1,2,0)))
-        axarr[1][1].imshow(grid_noisy.transpose((1,2,0)))
-        axarr[1][2].imshow(grid_mask.transpose((1,2,0)))
+        fig, axarr = plt.subplots(2,3,figsize=(15, 10)) 
+        axarr[0][0].imshow(grid_input)
+        axarr[0][1].imshow(grid_predict)
+        axarr[0][2].imshow(grid_new_predict)
+        axarr[1][0].imshow(grid_noise)
+        axarr[1][1].imshow(grid_noisy)
+        axarr[1][2].imshow(grid_mask)
         
         axarr[0][0].set_title("input")
         axarr[0][1].set_title("predict")
@@ -282,7 +297,7 @@ class Trainer:
         save_image(grid_noise, file_noise)
         
         noisy_dir_save      = dirs.list_dir['noisy_img']
-        file_noisy          = 'noise_epoch_{:05d}.png'.format(epoch)
+        file_noisy          = 'noisy_epoch_{:05d}.png'.format(epoch)
         file_noisy          = os.path.join(noisy_dir_save, file_noisy)
         grid_noisy          = make_grid(noisy, nrow=nrow, normalize=False)
         save_image(grid_noisy, file_noisy)
@@ -302,31 +317,42 @@ class Trainer:
         img_dir_save        = dirs.list_dir['img']
         img_final           = 'img_epoch_{:05d}.png'.format(epoch)
         img_final           = os.path.join(img_dir_save, img_final)
-        grid_input          = (grid_input.cpu().numpy() * 255).round().astype("uint8")
-        grid_noisy          = (grid_noisy.cpu().numpy() * 255).round().astype("uint8")
-        grid_noise          = (grid_noise.cpu().numpy() * 255).round().astype("uint8")
-        grid_mask           = (grid_mask.cpu().numpy() * 255).round().astype("uint8")
-        grid_final          = (grid_final.cpu().numpy() * 255).round().astype("uint8")
+        grid_input          = grid_input.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
+        grid_noisy          = grid_noisy.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
+        grid_noise          = grid_noise.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
+        grid_mask           = grid_mask.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
+        grid_final          = grid_final.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
         # grid_sample         = (grid_sample.cpu().numpy() * 255).round().astype("uint8")
         
-        fig, axarr = plt.subplots(1,5) 
-        axarr[0].imshow(grid_input.transpose((1,2,0)))
-        axarr[1].imshow(grid_noise.transpose((1,2,0)))
-        axarr[2].imshow(grid_noisy.transpose((1,2,0)))
-        axarr[3].imshow(grid_mask.transpose((1,2,0)))
-        axarr[4].imshow(grid_final.transpose((1,2,0)))
         
-        axarr[0].set_title("input")
-        axarr[1].set_title("noise")
-        axarr[2].set_title("noisy")
-        axarr[3].set_title("output")
-        axarr[4].set_title("output + noisy")
+        grid                = [grid_input, grid_noise, grid_noisy, grid_mask, grid_final]
+        grid_name           = ['input', 'noise', 'noisy', 'mask', 'final']
+        fig = plt.figure(figsize=(15, 10))
+        positions = [(0, 0, 2), (0, 2, 2), (0, 4, 2), (1, 1, 2), (1, 3, 2)]
+        for i, (row, col, colspan) in enumerate(positions):
+            ax = plt.subplot2grid((2, 6), (row, col), colspan=colspan)
+            ax.imshow(grid[i])
+            ax.set_title(grid_name[i])
+            ax.axis("off")
+
+        # fig, axarr = plt.subplots(2,3) 
+        # axarr[0].imshow(grid_input.transpose((1,2,0)))
+        # axarr[0].imshow(grid_noise.transpose((1,2,0)))
+        # axarr[2].imshow(grid_noisy.transpose((1,2,0)))
+        # axarr[3].imshow(grid_mask.transpose((1,2,0)))
+        # axarr[4].imshow(grid_final.transpose((1,2,0)))
         
-        axarr[0].axis("off")
-        axarr[1].axis("off")
-        axarr[2].axis("off")
-        axarr[3].axis("off")
-        axarr[4].axis("off")
+        # axarr[0].set_title("input")
+        # axarr[1].set_title("noise")
+        # axarr[2].set_title("noisy")
+        # axarr[3].set_title("output")
+        # axarr[4].set_title("output + noisy")
+        
+        # axarr[0].axis("off")
+        # axarr[1].axis("off")
+        # axarr[2].axis("off")
+        # axarr[3].axis("off")
+        # axarr[4].axis("off")
         plt.tight_layout()
         fig.savefig(img_final)
         plt.close(fig)
@@ -349,31 +375,41 @@ class Trainer:
         img_dir_save        = dirs.list_dir['black_res_img']
         img_final           = 'black_epoch_{:05d}.png'.format(epoch)
         img_final           = os.path.join(img_dir_save, img_final)
-        grid_input          = (grid_input.cpu().numpy() * 255).round().astype("uint8")
-        grid_noisy          = (grid_noisy.cpu().numpy() * 255).round().astype("uint8")
-        grid_mask           = (grid_mask.cpu().numpy() * 255).round().astype("uint8")
-        grid_final          = (grid_final.cpu().numpy() * 255).round().astype("uint8")
-        grid_noise          = (grid_noise.cpu().numpy() * 255).round().astype("uint8")
+        grid_input          = grid_input.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
+        grid_noisy          = grid_noisy.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
+        grid_mask           = grid_mask.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
+        grid_final          = grid_final.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
+        grid_noise          = grid_noise.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
         # grid_sample         = (grid_sample.cpu().numpy() * 255).round().astype("uint8")
         
-        fig, axarr = plt.subplots(1,5) 
-        axarr[0].imshow(grid_input.transpose((1,2,0)))
-        axarr[1].imshow(grid_noise.transpose((1,2,0)))
-        axarr[2].imshow(grid_noisy.transpose((1,2,0)))
-        axarr[3].imshow(grid_mask.transpose((1,2,0)))
-        axarr[4].imshow(grid_final.transpose((1,2,0)))
+        grid                = [grid_input, grid_noise, grid_noisy, grid_mask, grid_final]
+        grid_name           = ['input', 'noise', 'noisy', 'mask', 'final']
+        fig = plt.figure(figsize=(15, 10))
+        positions = [(0, 0, 2), (0, 2, 2), (0, 4, 2), (1, 1, 2), (1, 3, 2)]
+        for i, (row, col, colspan) in enumerate(positions):
+            ax = plt.subplot2grid((2, 6), (row, col), colspan=colspan)
+            ax.imshow(grid[i])
+            ax.set_title(grid_name[i])
+            ax.axis("off")
+            
+        # fig, axarr = plt.subplots(1,5) 
+        # axarr[0].imshow(grid_input)
+        # axarr[1].imshow(grid_noise)
+        # axarr[2].imshow(grid_noisy)
+        # axarr[3].imshow(grid_mask)
+        # axarr[4].imshow(grid_final)
         
-        axarr[0].set_title("input")
-        axarr[1].set_title("noise")
-        axarr[2].set_title("noisy")
-        axarr[3].set_title("output")
-        axarr[4].set_title("output + noisy")
+        # axarr[0].set_title("input")
+        # axarr[1].set_title("noise")
+        # axarr[2].set_title("noisy")
+        # axarr[3].set_title("output")
+        # axarr[4].set_title("output + noisy")
         
-        axarr[0].axis("off")
-        axarr[1].axis("off")
-        axarr[2].axis("off")
-        axarr[3].axis("off")
-        axarr[4].axis("off")
+        # axarr[0].axis("off")
+        # axarr[1].axis("off")
+        # axarr[2].axis("off")
+        # axarr[3].axis("off")
+        # axarr[4].axis("off")
         plt.tight_layout()
         fig.savefig(img_final)
         plt.close(fig)
@@ -386,10 +422,14 @@ class Trainer:
         file_loss = os.path.join(dir_save, file_loss)
         fig = plt.figure()
         
-        plt.subplot(1,1,1)
+        plt.subplot(1,2,1)
         plt.plot(np.array(loss_mean), color='red')
         plt.fill_between(list(range(len(loss_mean))), np.array(loss_mean)-np.array(loss_std), np.array(loss_mean)+np.array(loss_std), color='blue', alpha=0.2)
         plt.title('loss')
+        
+        plt.subplot(1,2,2)
+        plt.plot(np.array(self.lr_list), color='red')
+        plt.title('learning rate')
         
         plt.tight_layout()
         plt.savefig(file_loss, bbox_inches='tight', dpi=100)
@@ -425,11 +465,11 @@ class Trainer:
         dir_grid_save       = dirs.list_dir['sample_grid']
         sampler             = Sampler(self.dataloader, self.args, self.Mask)
 
-        sample, sample_list = sampler.sample(self.model.eval())
+        sample, sample_list, sample_t = sampler.sample(self.model.eval())
         # sample      = normalize01(sample)
         file_save       = 'sample_{:05d}.png'.format(epoch)
         sampler._save_image_grid(sample, dir_save, file_save)
-        sampler._save_image_multi_grid(sample_list, dir_grid_save, file_save)
+        sampler._save_image_multi_grid(sample_list, sample_t, dir_grid_save, file_save)
 
         '''
         (sample, sample_time) = sampler.sample(model_info, self.model.eval())
@@ -506,23 +546,17 @@ class Trainer:
         # plt.close(fig)
         
     def _save_model(self, dirs: dict, epoch: int):
-        filename    = 'model_epoch_{:05d}.pth'.format(epoch)
+        '''
+        https://huggingface.co/docs/accelerate/usage_guides/checkpoint
+        '''
+        filename    = 'model_epoch_{:05d}'.format(epoch)
         dir_save    = dirs.list_dir['model'] 
         filename    = os.path.join(dir_save, filename)
         
-        for param_group in self.optim_G.param_groups:
-            lr_generator = param_group['lr']
+        # self.accelerator.save_state(filename)
         
-        for param_group in self.optim_D.param_groups:
-            lr_discriminator = param_group['lr']
-
-        torch.save({
-            'generator'         : self.G.state_dict(),
-            'discriminator'     : self.D.state_dict(),
-            'lr_generator'      : lr_generator,
-            'lr_discriminator'  : lr_discriminator,
-            'epoch'             : epoch,
-        }, filename)
+        # unet        = self.accelerator.unwrap_model(self.model)
+        self.accelerator.save_model(self.model, filename)
 
         
     def _save_loss(self, dirs: dict, loss_generator_mean, loss_generator_std, loss_discriminator_mean, loss_discriminator_std):

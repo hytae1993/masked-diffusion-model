@@ -96,14 +96,14 @@ class Sampler:
         # latent      = self._generate_random_mask(self.args.batch_size, self.args.data_size, self.args.data_size, time_length)
         # latent      = model(latent, time_length).sample
         
-        latent      = torch.zeros(self.args.batch_size, 3, self.args.data_size, self.args.data_size)
+        latent      = torch.zeros(self.args.batch_size, self.args.out_channel, self.args.data_size, self.args.data_size)
         
         return latent
     
     
     def sample(self, model: Module):
-        sample, sample_list = self._sample(model) 
-        return sample, sample_list
+        sample, sample_list, sample_t = self._sample(model) 
+        return sample, sample_list, sample_t
 
 
     def _sample(self, model: Module):
@@ -147,7 +147,7 @@ class Sampler:
             # sample_progress_bar.clear()
             sample_progress_bar.close()
 
-        return sample, sample_list
+        return sample, sample_list, sample_t
     
     
     def sample_random_t(self, img: torch.Tensor, model: Module):
@@ -300,37 +300,44 @@ class Sampler:
     def _save_image_grid(self, sample: torch.Tensor, dir_save: str, file_sample: str):
         batch_size  = sample.shape[0]
         nrow        = int(np.ceil(np.sqrt(batch_size)))
-        grid_sample = make_grid(sample, nrow=nrow, normalize=True)
+        grid_sample = make_grid(sample, nrow=nrow, normalize=False)
         file_sample = os.path.join(dir_save, file_sample)
         save_image(grid_sample, file_sample)
         
     
-    def _save_image_multi_grid(self, sample: list, dir_save: str, file_sample: str):
+    def _save_image_multi_grid(self, sample: list, sample_t: list, dir_save: str, file_sample: str):
         batch_size  = sample[0].shape[0]
         nrow        = int(np.ceil(np.sqrt(batch_size)))
         grid_name   = os.path.join(dir_save, file_sample)
         
-        grid1       = make_grid(sample[0], nrow=nrow)
-        grid2       = make_grid(sample[1], nrow=nrow, normalize=True)
-        grid3       = make_grid(sample[2], nrow=nrow, normalize=True)
-        grid4       = make_grid(sample[3], nrow=nrow, normalize=True)
-        grid5       = make_grid(sample[4], nrow=nrow, normalize=True)
-        grid6       = make_grid(sample[5], nrow=nrow, normalize=True)
+        grid1       = make_grid(sample[0], nrow=nrow, normalize=False)
+        grid2       = make_grid(sample[1], nrow=nrow, normalize=False)
+        grid3       = make_grid(sample[2], nrow=nrow, normalize=False)
+        grid4       = make_grid(sample[3], nrow=nrow, normalize=False)
+        grid5       = make_grid(sample[4], nrow=nrow, normalize=False)
+        grid6       = make_grid(sample[5], nrow=nrow, normalize=False)
         
-        grid1       = (grid1.cpu().numpy() * 255).round().astype("uint8")
-        grid2       = (grid2.cpu().numpy() * 255).round().astype("uint8")
-        grid3       = (grid3.cpu().numpy() * 255).round().astype("uint8")
-        grid4       = (grid4.cpu().numpy() * 255).round().astype("uint8")
-        grid5       = (grid5.cpu().numpy() * 255).round().astype("uint8")
-        grid6       = (grid6.cpu().numpy() * 255).round().astype("uint8")
+        grid1       = grid1.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
+        grid2       = grid2.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
+        grid3       = grid3.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
+        grid4       = grid4.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
+        grid5       = grid5.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
+        grid6       = grid6.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
         
-        fig, axarr = plt.subplots(2,3) 
-        axarr[0][0].imshow(grid1.transpose((1,2,0)))
-        axarr[0][1].imshow(grid2.transpose((1,2,0)))
-        axarr[0][2].imshow(grid3.transpose((1,2,0)))
-        axarr[1][0].imshow(grid4.transpose((1,2,0)))
-        axarr[1][1].imshow(grid5.transpose((1,2,0)))
-        axarr[1][2].imshow(grid6.transpose((1,2,0)))
+        fig, axarr = plt.subplots(2,3, figsize=(15,10)) 
+        axarr[0][0].imshow(grid1)
+        axarr[0][1].imshow(grid2)
+        axarr[0][2].imshow(grid3)
+        axarr[1][0].imshow(grid4)
+        axarr[1][1].imshow(grid5)
+        axarr[1][2].imshow(grid6)
+        
+        axarr[0][0].set_title("input")
+        axarr[0][1].set_title("T->0->..->{}->0".format(sample_t[0]))
+        axarr[0][2].set_title("T->0->..->{}->0".format(sample_t[1]))
+        axarr[1][0].set_title("T->0->..->{}->0".format(sample_t[2]))
+        axarr[1][1].set_title("T->0->..->{}->0".format(sample_t[3]))
+        axarr[1][2].set_title("T->0->..->{}->0".format(sample_t[4]))
         
         axarr[0][0].axis("off")
         axarr[0][1].axis("off")
@@ -340,7 +347,7 @@ class Sampler:
         axarr[1][2].axis("off")
         
         plt.tight_layout()
-        fig.suptitle('T ------> 0',fontweight ="bold") 
+        # fig.suptitle('T ------> 0',fontweight ="bold") 
         fig.savefig(grid_name)
         plt.close(fig)
        
