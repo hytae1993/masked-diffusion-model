@@ -22,6 +22,7 @@ import os
 import random
 from tqdm.auto import tqdm
 
+from utils.datautils import normalize01
 
 class Sampler:
     def __init__(self, 
@@ -300,7 +301,8 @@ class Sampler:
     def _save_image_grid(self, sample: torch.Tensor, dir_save: str, file_sample: str):
         batch_size  = sample.shape[0]
         nrow        = int(np.ceil(np.sqrt(batch_size)))
-        grid_sample = make_grid(sample, nrow=nrow, normalize=False)
+        sample      = normalize01(sample)
+        grid_sample = make_grid(sample, nrow=nrow, normalize=True)
         file_sample = os.path.join(dir_save, file_sample)
         save_image(grid_sample, file_sample)
         
@@ -310,12 +312,19 @@ class Sampler:
         nrow        = int(np.ceil(np.sqrt(batch_size)))
         grid_name   = os.path.join(dir_save, file_sample)
         
-        grid1       = make_grid(sample[0], nrow=nrow, normalize=False)
-        grid2       = make_grid(sample[1], nrow=nrow, normalize=False)
-        grid3       = make_grid(sample[2], nrow=nrow, normalize=False)
-        grid4       = make_grid(sample[3], nrow=nrow, normalize=False)
-        grid5       = make_grid(sample[4], nrow=nrow, normalize=False)
-        grid6       = make_grid(sample[5], nrow=nrow, normalize=False)
+        sample[0]   = normalize01(sample[0])
+        sample[1]   = normalize01(sample[1])
+        sample[2]   = normalize01(sample[2])
+        sample[3]   = normalize01(sample[3])
+        sample[4]   = normalize01(sample[4])
+        sample[5]   = normalize01(sample[5])
+        
+        grid1       = make_grid(sample[0], nrow=nrow, normalize=True)
+        grid2       = make_grid(sample[1], nrow=nrow, normalize=True)
+        grid3       = make_grid(sample[2], nrow=nrow, normalize=True)
+        grid4       = make_grid(sample[3], nrow=nrow, normalize=True)
+        grid5       = make_grid(sample[4], nrow=nrow, normalize=True)
+        grid6       = make_grid(sample[5], nrow=nrow, normalize=True)
         
         grid1       = grid1.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
         grid2       = grid2.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
@@ -359,6 +368,7 @@ class Sampler:
             data[2*i]   = data1[i]
             data[2*i+1] = data2[i]
         nrow_batch  = int(np.ceil(np.sqrt(batch_size))) * 2
+        data        = normalize01(data)
         grid_data   = make_grid(data, nrow=nrow_batch, normalize=True)
         file_save   = os.path.join(dir_save, file_save)
         save_image(grid_data, file_save)
