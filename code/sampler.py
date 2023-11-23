@@ -29,12 +29,14 @@ class Sampler:
                 dataset: Dataset, 
                 args,
                 Mask,
+                Scheduler,
                 ):
 
         self.dataset        = dataset
         self.args           = args 
         self.Mask           = Mask
-      
+        self.Scheduler      = Scheduler
+        
         '''
         if evaluate: 
             self.metric_fid = FrechetInceptionDistance(feature=64).to(device)
@@ -89,9 +91,9 @@ class Sampler:
     '''
     
     def _get_latent_initial(self, model: Module):
-        time_length = self.args.ddpm_num_steps
-        time_length = torch.Tensor([time_length])
-        time_length = time_length.expand(self.args.batch_size).to(model.device)
+        # time_length = self.args.ddpm_num_steps
+        # time_length = torch.Tensor([time_length])
+        # time_length = time_length.expand(self.args.batch_size).to(model.device)
         
         # make all black tensor
         # latent      = self._generate_random_mask(self.args.batch_size, self.args.data_size, self.args.data_size, time_length)
@@ -136,8 +138,8 @@ class Sampler:
                 else:
                     # black_area_ratio    = self._mask_schedule(time-1)
                     # noise               = self._generate_random_mask(self.args.batch_size, self.args.data_size, self.args.data_size, black_area_ratio).to(model.device)
-                    black_area_ratio    = self.Mask.get_list_black_area_ratios(time-1)
-                    noise               = self.Mask.get_mask(black_area_ratio)
+                    black_area_num      = self.Scheduler.get_black_area_num_pixels_time(time-1)
+                    noise               = self.Mask.get_mask(black_area_num)
                     noise               = noise.to(model.device)
                     sample              = prediction * noise
                     
@@ -152,6 +154,10 @@ class Sampler:
     
     
     def sample_random_t(self, img: torch.Tensor, model: Module):
+        '''
+        Generate final output from all time t
+        ex) t -> 0 -> t-1 -> 0 -> t-2 -> ... -> 1 -> 0
+        '''
         sample_list = self._sample_random_t(img[0], model)
         return sample_list
     
@@ -192,8 +198,8 @@ class Sampler:
         time                = torch.tensor([time])
         # time                = torch.Tensor(time, device=model.device)
                 
-        black_area_ratio    = self.Mask.get_list_black_area_ratios(time)
-        noise               = self.Mask.get_mask(black_area_ratio)
+        black_area_num      = self.Scheduler.get_black_area_num_pixels_time(time)
+        noise               = self.Mask.get_mask(black_area_num)
         noise               = noise.to(model.device)
         sample              = img * noise
         

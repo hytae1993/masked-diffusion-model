@@ -12,7 +12,8 @@ data_subset=True
 data_subset_num=2000
 date=""
 time=""
-title="time_step_100_modelTime"
+method="base"
+title="time_step_700"
 # ==============================
 model=default
 in_channel=1
@@ -23,6 +24,7 @@ optim="adam"
 lr=1e-4
 lr_scheduler="cosine"
 lr_warmup_steps=500
+lr_cycle=0.5
 gradient_accumulation_steps=1
 sample_num=100
 sample_epoch_ratio=0.2
@@ -36,10 +38,10 @@ ema_max_decay=0.9999
 
 
 mixed_precision="fp16"
-ddpm_num_steps=100
+ddpm_num_steps=700
 ddpm_schedule="log_scale"
 checkpointing_steps=1000
-save_images_epochs=10
+save_images_epochs=1000
 save_images_batch=100
 save_loss=1
 
@@ -73,6 +75,7 @@ do
         --data_subset_num=${data_subset_num} \
         --date=${date} \
         --time=${time} \
+        --method=${method} \
         --title=${title} \
         --model=${model} \
         --in_channel=${in_channel} \
@@ -83,6 +86,7 @@ do
         --lr=${lr} \
         --lr_scheduler=${lr_scheduler} \
         --lr_warmup_steps=${lr_warmup_steps} \
+        --lr_cycle=${lr_cycle} \
         --gradient_accumulation_steps=${gradient_accumulation_steps} \
         --sample_num=${sample_num} \
         --sample_epoch_ratio=${sample_epoch_ratio} \

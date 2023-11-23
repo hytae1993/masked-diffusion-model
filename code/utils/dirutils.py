@@ -17,6 +17,7 @@ class Dir:
                  data_size: int, 
                  date: str='', 
                  time: str='',
+                 method: str='',
                  title: str=''):
         self.task               = task
         self.content            = content
@@ -27,6 +28,7 @@ class Dir:
         self.data_size          = data_size
         self.date               = date
         self.time               = time
+        self.method             = method
         self.title              = title
 
         now = datetime.datetime.now()
@@ -52,6 +54,7 @@ class Dir:
             'data_set'  : dir_data_set,
             'data_size' : dir_data_size,
             'time'      : dir_time,
+            'method'    : self.method,
             'title'     : self.title,
             }
        
@@ -69,7 +72,7 @@ class Dir:
 
     def _build_dir_train(self):
         
-        save_dir    = os.path.join(self.dir_work, 'result', self.content, self.list_dir_sub['data_name'], self.list_dir_sub['time'], self.list_dir_sub['title'])
+        save_dir    = os.path.join(self.dir_work, 'result', self.content, self.list_dir_sub['data_name'], self.list_dir_sub['method'], self.list_dir_sub['time'], self.list_dir_sub['title'])
         
         dir_list = {
             'img'           : os.path.join(save_dir, 'train', 'image', 'img'),

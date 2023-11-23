@@ -16,7 +16,7 @@ class Mask(nn.Module):
         self.width              = args.data_size
         
     
-    def get_mask(self, black_area_ratios):
+    def get_mask(self, black_area_num):
         """
         Generate random masks with black areas for each channel in the batch.
 
@@ -26,10 +26,10 @@ class Mask(nn.Module):
         Returns:
         - masks: Binary masks with black areas, shape (batch_size, 1, height, width).
         """
-        masks = torch.ones((len(black_area_ratios), 1, self.height, self.width), dtype=torch.float32)
+        masks = torch.ones((len(black_area_num), 1, self.height, self.width), dtype=torch.float32)
 
-        for i in range(len(black_area_ratios)):
-            num_black_pixels = black_area_ratios[i].int()
+        for i in range(len(black_area_num)):
+            num_black_pixels = black_area_num[i].int()
 
             black_pixels = random.sample(range(self.height * self.width), num_black_pixels)
 
@@ -67,46 +67,3 @@ class Mask(nn.Module):
         black_area_ratio    = np.ceil(black_area_ratio)
         
         return black_area_ratio
-    
-    
-    def update_ddpm_num_steps(self, max_time):
-        """
-        Update new time list according to time scheduler.
-
-        Parameters:
-        - time: Max time fo ddpm steps
-        
-        Returns:
-        - Updated ddpm time step.
-        """
-        
-        time_list          = list(range(1, max_time+1))
-        
-        if self.args.ddpm_schedule == 'linear':
-            # black_area_ratio    = list(map(int, timesteps / (self.args.ddpm_num_steps+1)))
-            ratio    = time_list / max_time
-            
-        elif self.args.ddpm_schedule == 'log_scale':
-            base     = 1.1
-            ratio    = np.power(base, time_list)
-            ratio    = ratio / ratio.max()
-        else:
-            raise ValueError("Invalid mask ratio scheduler")
-        
-        black_area_ratio    = self.height * self.width * ratio
-        black_area_ratio    = np.ceil(black_area_ratio)
-        black_area_ratio    = np.unique(black_area_ratio)
-        
-        ddpm_num_steps    = len(black_area_ratio)
-        
-        return ddpm_num_steps, black_area_ratio
-
-
-    # def forward(self, time):
-        
-    #     black_area_ratio    = self.get_list_black_area_ratios(time)
-    #     mask                = self.get_mask(black_area_ratio)
-        
-    #     return mask
-        
-        

@@ -12,7 +12,8 @@ data_subset=True
 data_subset_num=2000
 date=""
 time=""
-title="time_step_100_modelTime"
+method="base"
+title="time_step_500"
 # ==============================
 model=default
 in_channel=1
@@ -37,10 +38,10 @@ ema_max_decay=0.9999
 
 
 mixed_precision="fp16"
-ddpm_num_steps=100
+ddpm_num_steps=500
 ddpm_schedule="log_scale"
 checkpointing_steps=1000
-save_images_epochs=100
+save_images_epochs=1000
 save_images_batch=100
 save_loss=1
 
@@ -74,6 +75,7 @@ do
         --data_subset_num=${data_subset_num} \
         --date=${date} \
         --time=${time} \
+        --method=${method} \
         --title=${title} \
         --model=${model} \
         --in_channel=${in_channel} \

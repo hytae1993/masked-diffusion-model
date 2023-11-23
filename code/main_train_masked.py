@@ -28,7 +28,9 @@ from diffusers.optimization import get_scheduler, get_cosine_schedule_with_warmu
 from diffusers.training_utils import EMAModel
 
 
-from trainer_masked import Trainer
+from trainer_masked import Trainer as BaseTrainer
+from trainer_masked_shift import Trainer as ShiftTrainer
+
 import utils.datasetutils as datasetutils
 import utils.datasetutilsHugging as datasetHugging
 import utils.dirutils as dirutils
@@ -120,6 +122,10 @@ def get_lr_scheduler(scheduler_name: str, optimizer: optim.Optimizer, dataloader
     Choose between ["linear", "cosine", "cosine_with_restarts", "polynomial", "constant", "constant_with_warmup"]'
     '''
     if scheduler_name == "cosine":
+        
+        print(len(dataloader))
+        exit(1)
+        
         scheduler   = get_cosine_schedule_with_warmup(optimizer, num_warmup_steps=lr_warmup_steps * gradient_accumulation_steps, num_training_steps=len(dataloader)*num_epochs, num_cycles=num_cycles)
 
     elif scheduler_name == "constant":
@@ -287,7 +293,11 @@ def main(dirs: dict, args: dict):
         global_step, first_epoch, resume_step  = 0, 0, 0
         
     # accelerator.load_state('/nas/users/hyuntae/code/doctor/masked-diffusion-model/result/code_test/oxford-flower/2023_11_18_23_21_15/time_step_100_modelTime/model/model_epoch_02401')
-    trainer = Trainer(args, dataloader, model, ema_model, optimizer, lr_scheduler, accelerator)
+    if args.method.lower()  == 'base':
+        trainer = BaseTrainer(args, dataloader, model, ema_model, optimizer, lr_scheduler, accelerator)
+    elif args.method.lower() == 'shift':
+        trainer = ShiftTrainer(args, dataloader, model, ema_model, optimizer, lr_scheduler, accelerator)
+        
     trainer.train(first_epoch, args.num_epochs, resume_step, global_step, dirs)
  
 
@@ -315,6 +325,7 @@ if __name__ == '__main__':
     parser.add_argument('--data_subset_num', help='number of data subset', type=int, default=1000)
     parser.add_argument('--date', help='date of the program execution', type=str, default='')
     parser.add_argument('--time', help='time of the program execution', type=str, default='')
+    parser.add_argument('--method', help='algorithm of code', type=str, default='base')
     parser.add_argument('--title', help='title of experiment', type=str, default='')
     # ======================================================================
     parser.add_argument('--model', help='name of the neural network', type=str, default='default')
@@ -382,6 +393,7 @@ if __name__ == '__main__':
         data_size=args.data_size, 
         date=args.date, 
         time=args.time,
+        method=args.method,
         title=args.title,
         )
 
