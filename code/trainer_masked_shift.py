@@ -66,7 +66,8 @@ class Trainer:
         img                 = img.to(self.args.weight_dtype)
         
         # ===================================================================================
-        # Create a mask with a random area black and obtation generator prediction
+        # Create a mask with a random area black and obtation degraded image
+        # ===================================================================================
         timesteps           = torch.randint(low=1, high=self.args.updated_ddpm_num_steps+1, size=(img.shape[0],), device=img.device)
         timesteps_count     = torch.bincount(timesteps, minlength=self.args.updated_ddpm_num_steps+1)[1:]
         T_steps             = torch.where(timesteps == self.args.updated_ddpm_num_steps)
@@ -79,12 +80,22 @@ class Trainer:
         
         noisy_img           = img * noise
         
+        # ===================================================================================
+        # shift 
+        # ===================================================================================
+        shift           = self.Scheduler.get_schedule_shift_time(timesteps) 
+        source          = self.Scheduler.perturb_shift(noisy_img, shift).to(self.args.weight_dtype)
+        target          = self.Scheduler.perturb_shift(img, shift)
+        
+        # print(type(noisy_img), type(shift), type(source))
+        # print(noisy_img.dtype, shift.dtype, source.dtype)
+        # exit(1)
+        
         with self.accelerator.accumulate(self.model):
-            # mask            = self.model(noisy_img, black_area_ratio).sample
-            mask            = self.model(noisy_img, timesteps).sample
-            prediction      = noisy_img + mask
+            mask            = self.model(source, timesteps).sample
+            prediction      = source + mask
             
-            loss            = self._compute_loss(prediction.to(torch.float32), img.to(torch.float32))
+            loss            = self._compute_loss(prediction.to(torch.float32), target.to(torch.float32))
             
             self.accelerator.backward(loss)
             
@@ -118,7 +129,7 @@ class Trainer:
             inference_image_index   = inference_t_steps[0][0]
             inference_check_set = [inference_image_index, timesteps[inference_image_index]]
                                 
-        img_set             = [img, noise, noisy_img, mask, prediction]
+        img_set             = [img, noise, noisy_img, source, target, mask, prediction]
         
         return img_set, loss.item(), timesteps_count, black_image_index, inference_check_set
 
@@ -217,8 +228,12 @@ class Trainer:
         noise               = noise.to(input.device)
         
         noisy_img           = prediction * noise
-        mask                = self.model(noisy_img, timesteps).sample
-        new_prediction      = noisy_img + mask
+        
+        shift               = self.Scheduler.get_schedule_shift_time(timesteps) 
+        source              = self.Scheduler.perturb_shift(noisy_img, shift).to(self.args.weight_dtype)
+        
+        mask                = self.model(source, timesteps).sample
+        new_prediction      = source + mask
         
         # input predict new_predict
         # noise   noisy     output   

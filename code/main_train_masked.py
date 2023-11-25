@@ -19,6 +19,7 @@ import accelerate
 import torch
 import torch.nn.functional as F
 from accelerate import Accelerator, InitProcessGroupKwargs
+from accelerate import data_loader
 from accelerate.logging import get_logger
 from packaging import version
 
@@ -30,10 +31,13 @@ from diffusers.training_utils import EMAModel
 
 from trainer_masked import Trainer as BaseTrainer
 from trainer_masked_shift import Trainer as ShiftTrainer
+from trainer_test_template import Trainer as TestTrainer
 
 import utils.datasetutils as datasetutils
 import utils.datasetutilsHugging as datasetHugging
 import utils.dirutils as dirutils
+
+# data_loader._PYTORCH_DATALOADER_KWARGS["shuffle"] = True
 
 def get_dataset(data_path: str, data_name: str, data_set: str,  data_height: int, data_width: int, data_subset: bool, data_subset_num: int):
     
@@ -122,10 +126,6 @@ def get_lr_scheduler(scheduler_name: str, optimizer: optim.Optimizer, dataloader
     Choose between ["linear", "cosine", "cosine_with_restarts", "polynomial", "constant", "constant_with_warmup"]'
     '''
     if scheduler_name == "cosine":
-        
-        print(len(dataloader))
-        exit(1)
-        
         scheduler   = get_cosine_schedule_with_warmup(optimizer, num_warmup_steps=lr_warmup_steps * gradient_accumulation_steps, num_training_steps=len(dataloader)*num_epochs, num_cycles=num_cycles)
 
     elif scheduler_name == "constant":
@@ -164,7 +164,8 @@ def get_accelerator(args, ema_model):
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         mixed_precision=args.mixed_precision,
         kwargs_handlers=[kwargs],
-    )
+    )  
+    
     # `accelerate` 0.16.0 will have better support for customized saving
     if version.parse(accelerate.__version__) >= version.parse("0.16.0"):
         # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
@@ -275,12 +276,13 @@ def main(dirs: dict, args: dict):
     lr_scheduler    = get_lr_scheduler(args.lr_scheduler, optimizer, dataloader, args.lr_warmup_steps, args.gradient_accumulation_steps, args.num_epochs, args.lr_cycle)
     
     model, optimizer, dataloader, lr_scheduler  = accelerator.prepare(model, optimizer, dataloader, lr_scheduler)
+    
     if args.use_ema:
         ema_model.to(accelerator.device)
     if accelerator.is_main_process:
         run = os.path.split(__file__)[-1].split(".")[0]
         accelerator.init_trackers(run)
-
+        
     total_batch_size            = args.batch_size * accelerator.num_processes * args.gradient_accumulation_steps
     num_update_steps_per_epoch  = math.ceil(len(dataloader) / args.gradient_accumulation_steps)
     max_train_steps             = args.num_epochs * num_update_steps_per_epoch
@@ -292,11 +294,12 @@ def main(dirs: dict, args: dict):
     else:
         global_step, first_epoch, resume_step  = 0, 0, 0
         
-    # accelerator.load_state('/nas/users/hyuntae/code/doctor/masked-diffusion-model/result/code_test/oxford-flower/2023_11_18_23_21_15/time_step_100_modelTime/model/model_epoch_02401')
     if args.method.lower()  == 'base':
         trainer = BaseTrainer(args, dataloader, model, ema_model, optimizer, lr_scheduler, accelerator)
     elif args.method.lower() == 'shift':
         trainer = ShiftTrainer(args, dataloader, model, ema_model, optimizer, lr_scheduler, accelerator)
+    elif args.method.lower() == 'test':
+        trainer = TestTrainer(args, dataloader, model, ema_model, optimizer, lr_scheduler, accelerator)
         
     trainer.train(first_epoch, args.num_epochs, resume_step, global_step, dirs)
  
