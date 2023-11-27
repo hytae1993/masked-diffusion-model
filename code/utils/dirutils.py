@@ -92,7 +92,10 @@ class Dir:
             'model'         : os.path.join(save_dir, 'model'),
             'option'        : os.path.join(save_dir, 'option'),
             'loss'          : os.path.join(save_dir, 'loss'),
-            'checkpoint'        : os.path.join(save_dir, 'checkpoint'),
+            'checkpoint'    : os.path.join(save_dir, 'checkpoint'),
+            
+            'shift_img'     : os.path.join(save_dir, 'train', 'image', 'shift_input'),
+            'shift_noisy'   : os.path.join(save_dir, 'train', 'image', 'shift_noisy'),
             }      
         
         os.makedirs(dir_list['img'], exist_ok=True)
@@ -113,6 +116,10 @@ class Dir:
         os.makedirs(dir_list['option'], exist_ok=True)
         os.makedirs(dir_list['loss'], exist_ok=True)
         os.makedirs(dir_list['checkpoint'], exist_ok=True)
+        
+        if self.method == 'shift':
+            os.makedirs(dir_list['shift_img'], exist_ok=True)
+            os.makedirs(dir_list['shift_noisy'], exist_ok=True)
         
         return dir_list
 

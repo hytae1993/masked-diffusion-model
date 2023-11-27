@@ -295,8 +295,10 @@ class Trainer:
         input       = img[0]    # input image
         noise       = img[1]    # randomly generated mask
         noisy       = img[2]    # noise * input
-        mask        = img[3]    # output of model
-        predict     = img[4]    # output of model + noisy image
+        source      = img[3]    # shift of noisy
+        target      = img[4]    # shift of input
+        mask        = img[5]    # output of model
+        predict     = img[6]    # output of model + source image
         batch_size  = input.shape[0]
         nrow        = int(np.ceil(np.sqrt(batch_size)))
         
@@ -335,6 +337,20 @@ class Trainer:
         grid_final          = make_grid(predict, nrow=nrow, normalize=True)
         save_image(grid_final, file_final)
         
+        shift_img_dir_save  = dirs.list_dir['shift_img']
+        file_shift_img      = 'shifted_img_epoch_{:05d}.png'.format(epoch)
+        file_shift_img      = os.path.join(shift_img_dir_save, file_shift_img)
+        target              = normalize01(target)
+        grid_shift_input    = make_grid(target, nrow=nrow, normalize=True)
+        save_image(grid_shift_input, file_shift_img)
+        
+        shift_noisy_dir_save    = dirs.list_dir['shift_noisy']
+        file_shift_noisy        = 'shifted_noisy_epoch_{:05d}.png'.format(epoch)
+        file_shift_noisy        = os.path.join(shift_noisy_dir_save, file_shift_noisy)
+        source                  = normalize01(source)
+        grid_shift_noisy        = make_grid(source, nrow=nrow, normalize=True)
+        save_image(grid_shift_noisy, file_shift_noisy)
+        
         img_dir_save        = dirs.list_dir['img']
         img_final           = 'img_epoch_{:05d}.png'.format(epoch)
         img_final           = os.path.join(img_dir_save, img_final)
@@ -343,14 +359,16 @@ class Trainer:
         grid_noise          = grid_noise.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
         grid_mask           = grid_mask.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
         grid_final          = grid_final.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
+        grid_shift_input    = grid_shift_input.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
+        grid_shift_noisy    = grid_shift_noisy.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
         
-        grid                = [grid_input, grid_noise, grid_noisy, grid_mask, grid_final]
-        grid_name           = ['input', 'noise', 'noisy', 'mask', 'final']
+        grid                = [grid_input, grid_noise, grid_noisy, grid_shift_input, grid_shift_noisy, grid_mask, grid_final]
+        grid_name           = ['input', 'noise', 'noisy', 'input shift', 'noisy shift', 'mask', 'final']
         fig = plt.figure(figsize=(15, 10))
-        positions = [(0, 0, 2), (0, 2, 2), (0, 4, 2), (1, 1, 2), (1, 3, 2)]
-        positions = [(0, 1, 2), (0, 3, 2), (1, 0, 2), (1, 2, 2), (1, 4, 2)]
+        # positions = [(0, 1, 2), (0, 3, 2), (1, 0, 2), (1, 2, 2), (1, 4, 2)]
+        positions = [(0, 1, 2), (0, 3, 2), (0, 5, 2), (1, 0, 2), (1, 2, 2), (1, 4, 2), (1, 6, 2)]
         for i, (row, col, colspan) in enumerate(positions):
-            ax = plt.subplot2grid((2, 6), (row, col), colspan=colspan)
+            ax = plt.subplot2grid((2, 8), (row, col), colspan=colspan)
             ax.imshow(cmap='gray', X=grid[i])
             ax.set_title(grid_name[i])
             ax.axis("off")

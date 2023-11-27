@@ -12,14 +12,14 @@ data_subset=True
 data_subset_num=2000
 date=""
 time=""
-method="base"
-title="time_step_1000_withoutClipp"
+method="shift"
+title="only_7_time_500"
 # ==============================
 model=default
 in_channel=1
 out_channel=1
 batch_size=128
-num_epochs=10000
+num_epochs=20000
 optim="adam"
 lr=1e-4
 lr_scheduler="cosine"
@@ -38,7 +38,7 @@ ema_max_decay=0.9999
 
 
 mixed_precision="fp16"
-ddpm_num_steps=1000
+ddpm_num_steps=500
 ddpm_schedule="log_scale"
 checkpointing_steps=1000
 save_images_epochs=1000
