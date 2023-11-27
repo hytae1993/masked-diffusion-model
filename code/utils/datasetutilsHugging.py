@@ -79,18 +79,17 @@ def DatasetUtils(data_path: str, data_name: str, data_set: str, data_height: int
     if data_name.lower() == 'mnist':
         
         def transforms_Mnist(examples):
-            # examples["pixel_values"] = [
-            #     transform_Gray(image) for image in examples["image"]
-            # ]
-            # return examples
             images  = [transform_Gray(image=np.array(image))["image"] for image in examples["image"]]
             labels  = [label for label in examples["label"]]
             return {"image": images, "label": labels}
-    
+        
         if data_set.lower() == 'train':
             if data_subset:
-                dataset = load_dataset("mnist", split="train[0:{}]".format(data_subset_num), cache_dir=data_path)
+                # dataset = load_dataset("mnist", split="train[0:{}]".format(data_subset_num), cache_dir=data_path)
                 # dataset[0] = {'image': <PIL.PngImagePlugin.PngImageFile image mode=L size=28x28 at 0x7F3CCEF72B90>, 'label': 5}
+                
+                dataset = load_dataset("mnist", split="train", cache_dir=data_path)
+                dataset = dataset.filter(lambda example: example["label"] == 7)
             else:
                 dataset = load_dataset("mnist", split="train", cache_dir=data_path)
         elif data_set.lower() == 'test':
