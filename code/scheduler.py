@@ -30,20 +30,22 @@ class Scheduler:
         Returns:
         - Updated ddpm time step.
         """
+        time_list                   = list(range(1, self.image_size+1))
+        
         if self.args.ddpm_schedule == 'linear':
-            pass
+            black_area_num_pixel        = self.get_extract_linear_random_sublist(time_list, self.args.ddpm_num_steps)
         
         elif self.args.ddpm_schedule == 'log_scale':
-            time_list                   = list(range(1, self.image_size+1))
             black_area_num_pixel        = self.get_extract_log_scale_random_sublist(time_list, self.args.ddpm_num_steps)
-            black_area_num_pixel[-1]    = self.image_size # make sure the last T is remove all pixels           
-            
-            ddpm_num_steps          = len(black_area_num_pixel)
-            self.ratio_list         = torch.tensor(black_area_num_pixel / self.image_size)
-            self.black_area_pixels  = black_area_num_pixel
             
         else:
             raise ValueError("Invalid mask ratio scheduler")
+        
+        black_area_num_pixel[-1]    = self.image_size # make sure the last T is remove all pixels  
+        
+        ddpm_num_steps          = len(black_area_num_pixel)
+        self.ratio_list         = torch.tensor(black_area_num_pixel / self.image_size)
+        self.black_area_pixels  = black_area_num_pixel
         
         self.updated_ddpm_num_steps = ddpm_num_steps
         
@@ -68,12 +70,26 @@ class Scheduler:
         return black_area_num_pixles_time
     
     
+    def get_extract_linear_random_sublist(self, time_list, n):
+        if n > len(time_list):
+            raise ValueError("Desired to remove number of pixels is greater than the size of input image.")
+        
+        # Generate linear scale indices
+        max_index       = len(time_list) - 1
+        # linear_indices  = [int(i / self.image_size) for i in range(1, n+1)]
+        linear_indices  = [int(self.image_size/n) * i for i in range(1, n+1)]
+        
+        unique_linear_indices = list(set(linear_indices))
+        
+        black_area_num_pixel = np.array([time_list[i] for i in sorted(unique_linear_indices)[:n]])
+        return black_area_num_pixel
+    
     def get_extract_log_scale_random_sublist(self, time_list, n):
         if n > len(time_list):
             raise ValueError("Desired to remove number of pixels is greater than the size of input image.")
 
         # Generate logarithmic scale indices
-        max_index = len(time_list) - 1
+        max_index   = len(time_list) - 1
         log_indices = [int(round(10**random.uniform(0, math.log10(max_index)))) for _ in range(n)]
 
         # Ensure unique indices
