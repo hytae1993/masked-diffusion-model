@@ -60,9 +60,10 @@ class Trainer:
         if 'huggingface' in self.args.dir_dataset:
             img     = input["image"]
             label   = input["label"]
+            pass
         else:
-            img     = input
-            
+            img     = input[0]
+
         img                 = img.to(self.args.weight_dtype)
         
         # ===================================================================================
@@ -84,18 +85,15 @@ class Trainer:
         # shift 
         # ===================================================================================
         shift           = self.Scheduler.get_schedule_shift_time(timesteps) 
-        source          = self.Scheduler.perturb_shift(noisy_img, shift).to(self.args.weight_dtype)
+        source          = self.Scheduler.perturb_shift(noisy_img, shift)
         target          = self.Scheduler.perturb_shift(img, shift)
-        
-        # print(type(noisy_img), type(shift), type(source))
-        # print(noisy_img.dtype, shift.dtype, source.dtype)
-        # exit(1)
         
         with self.accelerator.accumulate(self.model):
             mask            = self.model(source, timesteps).sample
             prediction      = source + mask
             
-            loss            = self._compute_loss(prediction.to(torch.float32), target.to(torch.float32))
+            # loss            = self._compute_loss(prediction.to(torch.float32), target.to(torch.float32))
+            loss            = self._compute_loss(prediction, target)
             
             self.accelerator.backward(loss)
             
@@ -144,8 +142,13 @@ class Trainer:
         black_image_set     = [[],[],[],[],[]]
         inference_image_set = [[],[],[]]
         
+        # label   = [1 for _ in range(10)]
+        
         for i, input in enumerate(self.dataloader, 0):
-            
+            # print(input['label'])
+            # for j in range(len(input['label'])):
+            #     label[input['label'][j]] += 1
+                
             img_set, loss, batch_timesteps_count, black_index, inference_set = self._run_batch(i, input, epoch, epoch_length, resume_step, dirs)
             batch_progress_bar.update(1)
             
@@ -166,7 +169,8 @@ class Trainer:
                     inference_image_set[1].append(img_set[4][inference_set[0]:inference_set[0]+1]) # prediction image of time T
                     inference_image_set[2].append(inference_set[1].item())             # time T
 
-
+        # print(label)
+        # exit(1)
         batch_progress_bar.close()
         return img_set, loss_batch, epoch_timesteps_count, black_image_set, inference_image_set
     
@@ -209,7 +213,8 @@ class Trainer:
                     self._save_inference_image(dirs, inference_image_set, epoch)
                     self._save_black_image(dirs, black_image_set, epoch)
                     self._save_sample(dirs, epoch)
-                    self._save_sample_random_t(dirs, img_set[0], epoch)
+                    self._save_train_result_each_t(dirs, img_set[0], epoch)
+                    # self._save_sample_random_t(dirs, img_set[0], epoch)
                     self._save_learning_curve(dirs, loss_mean_epoch, loss_std_epoch)
                     self._save_time_step(dirs, timesteps_count, epoch)
             
@@ -430,7 +435,7 @@ class Trainer:
         # file_loss = 'loss_epoch_{:05d}.png'.format(epoch)
         file_loss = 'loss.png'
         file_loss = os.path.join(dir_save, file_loss)
-        fig = plt.figure()
+        fig = plt.figure(figsize=(16, 8))
         
         plt.subplot(1,2,1)
         plt.plot(np.array(loss_mean), color='red')
@@ -480,50 +485,53 @@ class Trainer:
         file_save       = 'sample_{:05d}.png'.format(epoch)
         self.Sampler._save_image_grid(sample, dir_save, file_save)
         self.Sampler._save_image_multi_grid(sample_list, sample_t, dir_grid_save, file_save)
+ 
 
-        '''
-        (sample, sample_time) = sampler.sample(model_info, self.model.eval())
-        file_save       = 'sample_{:05d}.png'.format(epoch)
-        file_save_time  = 'sample_{:05d}_time.png'.format(epoch)
-        sample          = normalize01(sample)
-        sampler._save_image_grid(sample, dir_save, file_save)
-        # sampler._save_image_grid(sample_time, dir_save, file_save_time)
-        ''' 
+    def _save_train_result_each_t(self, dirs, img, epoch):
+        dir_save    = dirs.list_dir['each_time_result'] 
         
-        '''
-        num_trial = 10 
-        sample_interp = sampler.sample_interpolate(model_info, self.model.eval(), num_trial)
-        for trial in range(num_trial):
-            sample_interp_trial = sample_interp[trial]
-            file_save_interp    = 'sample_epoch_{:05d}_{:03d}_interp_{:02d}.png'.format(args.epoch, i+1, trial+1) 
-            sample_interp_trial = normalize01(sample_interp_trial)
-            sampler._save_image_grid(sample_interp_trial, dir_save, file_save_interp)
-        ''' 
+        noisy_list, mask_list, sample_list = self.Sampler.result_each_t(img, self.model.eval())
+        
+        noisy_list  = torch.cat(noisy_list, dim=0)
+        mask_list   = torch.cat(mask_list, dim=0)
+        sample_list = torch.cat(sample_list, dim=0)
+        # sample      = normalize01(sample)
+        file_save   = 'each_rsult_t_{:05d}.png'.format(epoch)
+        file_save   = os.path.join(dir_save, file_save)
+        
+        nrow        = int(np.ceil(np.sqrt(len(sample_list))))
+        noisy_list  = normalize01(noisy_list)
+        mask_list   = normalize01(mask_list)
+        sample_list = normalize01(sample_list)
+        
+        noisy_grid  = make_grid(noisy_list, nrow=nrow, normalize=True)
+        mask_grid   = make_grid(mask_list, nrow=nrow, normalize=True)
+        sample_grid = make_grid(sample_list, nrow=nrow, normalize=True)
+        
+        noisy_grid  = noisy_grid.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
+        mask_grid   = mask_grid.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
+        sample_grid = sample_grid.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
     
-        # if (self.ema_model is not None) and (self.ema_model.ema_start <= epoch):
-        #     '''
-        #     (sample, sample_time) = sampler.sample(model_info, self.ema.eval())
-        #     file_save       = 'sample_{:05d}_ema.png'.format(epoch)
-        #     file_save_time  = 'sample_{:05d}_ema_time.png'.format(epoch)
-        #     sample = normalize01(sample)
-        #     sampler._save_image_grid(sample, dir_save, file_save)
-        #     sampler._save_image_grid(sample_time, dir_save, file_save_time)
-        #     '''
-        #     sample = sampler.sample(self.ema_model.eval())
-        #     # sample = normalize01(sample)
-        #     file_save = 'sample_{:05d}_ema.png'.format(epoch)
-        #     sampler._save_image_grid(sample, dir_save, file_save)
-            
-        #     '''
-        #     sample_interp = sampler.sample_interpolate(model_info, self.ema.eval(), num_trial)
-        #     for trial in range(num_trial):
-        #         sample_interp_trial = sample_interp[trial]
-        #         file_save_interp    = 'sample_epoch_{:05d}_{:03d}_interp_{:02d}_ema.png'.format(args.epoch, i+1, trial+1) 
-        #         sample_interp_trial = normalize01(sample_interp_trial)
-        #         sampler._save_image_grid(sample_interp_trial, dir_save, file_save_interp)
-        #    ''' 
- 
- 
+    
+        fig, axarr = plt.subplots(1,3,figsize=(15, 10)) 
+        axarr[0].imshow(cmap='gray', X=noisy_grid)
+        axarr[1].imshow(cmap='gray', X=mask_grid)
+        axarr[2].imshow(cmap='gray', X=sample_grid)
+        
+        axarr[0].set_title("noisy")
+        axarr[1].set_title("output")
+        axarr[2].set_title("prediction")
+        
+        axarr[0].axis("off")
+        axarr[1].axis("off")
+        axarr[2].axis("off")
+        
+        plt.tight_layout()
+        fig.savefig(file_save)
+        plt.close(fig)
+        
+        
+        
     def _save_sample_random_t(self, dirs, img, epoch):
         dir_save    = dirs.list_dir['sample_random'] 
 

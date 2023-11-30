@@ -110,7 +110,7 @@ class Scheduler:
         Returns:
         - masks: Binary masks with black areas, shape (batch_size, 1, height, width).
         """
-        masks = torch.ones((len(black_area_num), 1, self.height, self.width), dtype=torch.float32)
+        masks = torch.ones((len(black_area_num), 1, self.height, self.width))
 
         for i in range(len(black_area_num)):
             num_black_pixels = black_area_num[i].int()
@@ -126,14 +126,12 @@ class Scheduler:
     
     
     def get_schedule_shift_time(self, timesteps: torch.IntTensor) -> torch.FloatTensor:
-        random = torch.FloatTensor(len(timesteps)).uniform_(-1.0, +1.0)
-        random = random.to(timesteps.device)
-        random = random.to(self.args.weight_dtype)
+        random      = torch.FloatTensor(len(timesteps)).uniform_(-1.0, +1.0)
+        random      = random.to(timesteps.device)
         timesteps   = timesteps.int()
-        ratio  = torch.index_select(self.ratio_list.to(timesteps.device), 0, timesteps-1)
-    
+        ratio       = torch.index_select(self.ratio_list.to(timesteps.device), 0, timesteps-1)
         shift_time  = random * ratio
-        
+        shift_time  = shift_time.to(self.args.weight_dtype)
         return shift_time
     
     

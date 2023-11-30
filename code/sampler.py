@@ -112,7 +112,7 @@ class Sampler:
                 time                = time.expand(self.args.batch_size).to(model.device)
                 
                 shift               = self.Scheduler.get_schedule_shift_time(time)
-                sample              = self.Scheduler.perturb_shift(sample, shift).to(self.args.weight_dtype)
+                sample              = self.Scheduler.perturb_shift(sample, shift)
                 
                 mask                = model(sample, time).sample
                 prediction          = sample + mask
@@ -212,7 +212,53 @@ class Sampler:
         sample_random_t_progress_bar.close()
             
         return sample_list
+    
+    
+    def result_each_t(self, img: torch.Tensor, model: Module):
+        '''
+        Generate first output from all time t
+        ex) T -> 0, T-1 -> 0, T-2 -> 0, ... , 1 -> 0
+        '''
+        if self.args.method == 'base':
+            pass
+        elif self.args.method == 'shift':
+            noisy_list, mask_list, sample_list = self._each_result_shift_t(img[0], model)
+        
+        return noisy_list, mask_list, sample_list
+    
+    
+    def _each_result_shift_t(self, img: torch.Tensor, model: Module):
+        sample_list = [img.unsqueeze(dim=0)]
+        noise_list  = []
+        noisy_list  = []
+        mask_list   = []
+        
+        time_length = self.args.updated_ddpm_num_steps
+        
+        with torch.no_grad():
+            each_result_t_progress_bar    = tqdm(total=time_length, leave=False)
+            each_result_t_progress_bar.set_description(f"each first result of t")
+            for sampleTime in range(1, time_length+1):
                 
+                shift   = self.Scheduler.get_schedule_shift_time(torch.tensor([sampleTime]))
+                t_noisy = self._get_noisy_shift(sampleTime, img, shift, model)
+                               
+                time                = torch.Tensor([sampleTime])
+                shift_time          = self.Scheduler.get_schedule_shift_time(time)
+                
+                mask                = model(t_noisy, time.to(model.device)).sample
+                prediction          = mask + t_noisy
+                prediction          = self.Scheduler.perturb_shift_inverse(prediction, shift_time)
+                
+                noisy_list.append(t_noisy)
+                mask_list.append(mask)
+                sample_list.append(prediction)
+
+                each_result_t_progress_bar.update(1)
+        each_result_t_progress_bar.close()
+            
+        return noisy_list, mask_list, sample_list
+    
     
     def _get_noisy(self, time: int, img: torch.Tensor, model: Module):
         time                = torch.tensor([time])
@@ -234,7 +280,7 @@ class Sampler:
         noise               = self.Scheduler.get_mask(black_area_num)
         noise               = noise.to(model.device)
         sample              = img * noise
-        sample_shift        = self.Scheduler.perturb_shift(sample, shift).to(self.args.weight_dtype)
+        sample_shift        = self.Scheduler.perturb_shift(sample, shift)
         
         return sample_shift
 
