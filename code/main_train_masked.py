@@ -31,6 +31,7 @@ from diffusers.training_utils import EMAModel
 
 from trainer_masked import Trainer as BaseTrainer
 from trainer_masked_shift import Trainer as ShiftTrainer
+from trainer_masked_mean_shift import Trainer as MeanShiftTrainer
 from trainer_test_template import Trainer as TestTrainer
 
 import utils.datasetutils as datasetutils
@@ -39,11 +40,12 @@ import utils.dirutils as dirutils
 
 # data_loader._PYTORCH_DATALOADER_KWARGS["shuffle"] = True
 
-def get_dataset(data_path: str, data_name: str, data_set: str,  data_height: int, data_width: int, data_subset: bool, data_subset_num: int):
+def get_dataset(data_path: str, data_name: str, data_set: str,  data_height: int, data_width: int, data_subset: bool, data_subset_num: int, method: str):
     
     if 'hugging' in data_path:
         # datset using huggingface
-        dataset = datasetHugging.DatasetUtils(data_path, data_name, data_set, data_height, data_width, data_subset, data_subset_num)
+        dataset = datasetHugging.DatasetUtils(data_path, data_name, data_set, data_height, data_width, data_subset, data_subset_num, method)
+        # dataset = datasetutils.DatasetUtils(data_path, data_name, data_set, data_height, data_width, data_subset, data_subset_num)
     else:
         # dataset using torch
         dataset = datasetutils.DatasetUtils(data_path, data_name, data_set, data_height, data_width, data_subset, data_subset_num)
@@ -263,7 +265,7 @@ def resume_train(args, accelerator, num_update_steps_per_epoch):
     
 def main(dirs: dict, args: dict):
     
-    dataset     = get_dataset(args.dir_dataset, args.data_name, args.data_set, args.data_size, args.data_size, args.data_subset, args.data_subset_num)
+    dataset     = get_dataset(args.dir_dataset, args.data_name, args.data_set, args.data_size, args.data_size, args.data_subset, args.data_subset_num, args.method)
     dataloader  = get_dataloader(dataset, args.batch_size, args.num_workers)
     
     model       = get_model(args)
@@ -298,6 +300,8 @@ def main(dirs: dict, args: dict):
         trainer = BaseTrainer(args, dataloader, model, ema_model, optimizer, lr_scheduler, accelerator)
     elif args.method.lower() == 'shift':
         trainer = ShiftTrainer(args, dataloader, model, ema_model, optimizer, lr_scheduler, accelerator)
+    elif args.method.lower() == 'mean_shift':
+        trainer = MeanShiftTrainer(args, dataloader, model, ema_model, optimizer, lr_scheduler, accelerator)
     elif args.method.lower() == 'test':
         trainer = TestTrainer(args, dataloader, model, ema_model, optimizer, lr_scheduler, accelerator)
         

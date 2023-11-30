@@ -75,27 +75,28 @@ class Dir:
         save_dir    = os.path.join(self.dir_work, 'result', self.content, self.list_dir_sub['data_name'], self.list_dir_sub['method'], self.list_dir_sub['time'], self.list_dir_sub['title'])
         
         dir_list = {
-            'img'           : os.path.join(save_dir, 'train', 'image', 'img'),
-            'train_img'     : os.path.join(save_dir, 'train', 'image', 'train_image'),
-            'mask_img'      : os.path.join(save_dir, 'train', 'image', 'mask_image'),
-            'noise_img'     : os.path.join(save_dir, 'train', 'image', 'noise_image'),
-            'noisy_img'     : os.path.join(save_dir, 'train', 'image', 'noisy_image'),
-            'predict_img'   : os.path.join(save_dir, 'train', 'image', 'predict_image'),
-            'black_res_img' : os.path.join(save_dir, 'train', 'image', 'black_res_image'),
-            'sample_img'    : os.path.join(save_dir, 'train', 'image', 'sample_image'),
-            'sample_grid'   : os.path.join(save_dir, 'train', 'image', 'sample_grid'),
-            'sample_random' : os.path.join(save_dir, 'train', 'image', 'sample_random'),
-            'inference_grid': os.path.join(save_dir, 'train', 'image', 'inference_grid'),
-            'train_loss'    : os.path.join(save_dir, 'train', 'loss'),
-            'time_step'     : os.path.join(save_dir, 'train', 'time_step'),
-            'log'           : os.path.join(save_dir, 'log'),
-            'model'         : os.path.join(save_dir, 'model'),
-            'option'        : os.path.join(save_dir, 'option'),
-            'loss'          : os.path.join(save_dir, 'loss'),
-            'checkpoint'    : os.path.join(save_dir, 'checkpoint'),
+            'img'               : os.path.join(save_dir, 'train', 'image', 'img'),
+            'train_img'         : os.path.join(save_dir, 'train', 'image', 'train_image'),
+            'mask_img'          : os.path.join(save_dir, 'train', 'image', 'mask_image'),
+            'noise_img'         : os.path.join(save_dir, 'train', 'image', 'noise_image'),
+            'noisy_img'         : os.path.join(save_dir, 'train', 'image', 'noisy_image'),
+            'predict_img'       : os.path.join(save_dir, 'train', 'image', 'predict_image'),
+            'black_res_img'     : os.path.join(save_dir, 'train', 'image', 'black_res_image'),
+            'sample_img'        : os.path.join(save_dir, 'train', 'image', 'sample_image'),
+            'each_time_result'  : os.path.join(save_dir, 'train', 'image', 'each_time_result'),
+            'sample_grid'       : os.path.join(save_dir, 'train', 'image', 'sample_grid'),
+            'sample_random'     : os.path.join(save_dir, 'train', 'image', 'sample_random'),
+            'inference_grid'    : os.path.join(save_dir, 'train', 'image', 'inference_grid'),
+            'train_loss'        : os.path.join(save_dir, 'train', 'loss'),
+            'time_step'         : os.path.join(save_dir, 'train', 'time_step'),
+            'log'               : os.path.join(save_dir, 'log'),
+            'model'             : os.path.join(save_dir, 'model'),
+            'option'            : os.path.join(save_dir, 'option'),
+            'loss'              : os.path.join(save_dir, 'loss'),
+            'checkpoint'        : os.path.join(save_dir, 'checkpoint'),
             
-            'shift_img'     : os.path.join(save_dir, 'train', 'image', 'shift_input'),
-            'shift_noisy'   : os.path.join(save_dir, 'train', 'image', 'shift_noisy'),
+            'shift_img'         : os.path.join(save_dir, 'train', 'image', 'shift_input'),
+            'shift_noisy'       : os.path.join(save_dir, 'train', 'image', 'shift_noisy'),
             }      
         
         os.makedirs(dir_list['img'], exist_ok=True)
@@ -106,6 +107,7 @@ class Dir:
         os.makedirs(dir_list['predict_img'], exist_ok=True)
         os.makedirs(dir_list['black_res_img'], exist_ok=True)
         os.makedirs(dir_list['sample_img'], exist_ok=True)
+        os.makedirs(dir_list['each_time_result'], exist_ok=True)
         os.makedirs(dir_list['sample_grid'], exist_ok=True)
         os.makedirs(dir_list['sample_random'], exist_ok=True)
         os.makedirs(dir_list['inference_grid'], exist_ok=True)
@@ -117,7 +119,7 @@ class Dir:
         os.makedirs(dir_list['loss'], exist_ok=True)
         os.makedirs(dir_list['checkpoint'], exist_ok=True)
         
-        if self.method == 'shift':
+        if self.method == 'shift' or self.method == 'mean_shift':
             os.makedirs(dir_list['shift_img'], exist_ok=True)
             os.makedirs(dir_list['shift_noisy'], exist_ok=True)
         

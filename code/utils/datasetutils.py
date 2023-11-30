@@ -218,6 +218,10 @@ def DatasetUtils(data_path: str, data_name: str, data_set: str, data_height: int
     # mnist 
     # ======================================================================
     elif data_name.lower() == 'mnist':
+        transform = torchvision.transforms.Compose([ 
+            torchvision.transforms.CenterCrop([32, 32]),
+            torchvision.transforms.ToTensor(),
+            ])
         if data_set.lower() == 'train':
             dataset = torchvision.datasets.MNIST(data_path, transform=transform, train=True, download=True)
         elif data_set.lower() == 'test':
@@ -227,10 +231,11 @@ def DatasetUtils(data_path: str, data_name: str, data_set: str, data_height: int
             dataset_test    = torchvision.datasets.MNIST(data_path, transform=transform, train=False, download=True)
             dataset         = torch.utils.data.ConcatDataset([dataset_train, dataset_test]) 
 
-        if data_subset_use == True:
+        if data_subset == True:
             idx_label = torch.zeros_like(dataset.targets).bool()
-            for label in data_subset_label:
-                idx_label = torch.logical_or(idx_label, dataset.targets == label)
+            # for label in data_subset_label:
+            #     idx_label = torch.logical_or(idx_label, dataset.targets == label)
+            idx_label = torch.logical_or(idx_label, dataset.targets == 7)
             dataset.data    = dataset.data[idx_label]
             dataset.targets = dataset.targets[idx_label]
     # ======================================================================
@@ -246,7 +251,7 @@ def DatasetUtils(data_path: str, data_name: str, data_set: str, data_height: int
             dataset_test    = torchvision.datasets.CIFAR10(data_path, transform=transform, train=False, download=True)
             dataset         = torch.utils.data.ConcatDataset([dataset_train, dataset_test]) 
         
-        if data_subset_use == True: 
+        if data_subset == True: 
             dataset.data    = np.array(dataset.data)
             dataset.targets = np.array(dataset.targets)
             idx_label = np.zeros_like(dataset.targets, dtype=bool)
