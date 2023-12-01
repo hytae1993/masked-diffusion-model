@@ -130,12 +130,14 @@ class Scheduler:
         Generate masks with mean of selected areas for each channel in the batch.
 
         Parameters:
-        - image
+        - black_area_num
+        - img
 
         Returns:
-        - masks: Binary masks with black areas, shape (batch_size, 1, height, width).
+        - noisy_img: Input image in which areas to be removed are filled with their mean value
+        - mean_masks: Masks filled with average values for areas to be removed, shape (batch_size, 1, height, width).
         """
-        masks = torch.ones((len(black_area_num), 1, self.height, self.width)).to(img.device)
+        masks = torch.ones((len(black_area_num), img.shape[1], self.height, self.width)).to(img.device)
 
         for i in range(len(black_area_num)):
             num_black_pixels = black_area_num[i].int()
@@ -145,15 +147,15 @@ class Scheduler:
             black_pixels = [(idx // self.width, idx % self.width) for idx in black_pixels]
 
             for j, k in black_pixels:
-                masks[i, 0, j, k] = 0.0
-                
-                
-        mean_pixel  = img * (1-masks).sum(dim=(1,2,3), keepdim=True)
-        mean_pixel  = mean_pixel / (1-masks).sum(dim=(1,2,3), keepdim=True)
+                for l in range(img.shape[1]):
+                    masks[i, l, j, k] = 0.0
+                    
+        sum_pixel   = (img * (1-masks)).sum(dim=(1,2,3), keepdim=True)
+        mean_pixel  = sum_pixel / (1-masks).sum(dim=(1,2,3), keepdim=True)
         
         noisy_img   = ((1-masks) * mean_pixel) + masks * img
         mean_masks  = ((1-masks) * mean_pixel) + masks
-            
+        
         return noisy_img, mean_masks
     
     
