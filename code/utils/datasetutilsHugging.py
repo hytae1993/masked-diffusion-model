@@ -7,7 +7,7 @@ from os.path import join
 from torch.utils.data import DataLoader, Subset
 from pathlib import Path
 import datasets
-from datasets import load_dataset, concatenate_datasets
+from datasets import load_dataset, concatenate_datasets, load_dataset_builder
 import albumentations
 import albumentations.pytorch
 import numpy as np
@@ -120,31 +120,22 @@ def DatasetUtils(data_path: str, data_name: str, data_set: str, data_height: int
             dataset.set_transform(transforms_Mnist)
     
     # ======================================================================
-    # cifar10 
+    # Metfaces 
     # ======================================================================
-    elif data_name.lower() == 'cifar10':
-        if data_set.lower() == 'train':
-            dataset = torchvision.datasets.CIFAR10(data_path, transform=transform, train=True, download=True)
-        elif data_set.lower() == 'test':
-            dataset = torchvision.datasets.CIFAR10(data_path, transform=transform, train=False, download=True)
-        elif data_set.lower() == 'all':
-            dataset_train   = torchvision.datasets.CIFAR10(data_path, transform=transform, train=True, download=True)
-            dataset_test    = torchvision.datasets.CIFAR10(data_path, transform=transform, train=False, download=True)
-            dataset         = torch.utils.data.ConcatDataset([dataset_train, dataset_test]) 
+    elif data_name.lower() == 'metfaces':
         
-        if data_subset_use == True: 
-            dataset.data    = np.array(dataset.data)
-            dataset.targets = np.array(dataset.targets)
-            idx_label = np.zeros_like(dataset.targets, dtype=bool)
-            for label in data_subset_label:
-                idx_label = np.logical_or(idx_label, dataset.targets == label)
-            dataset.data    = dataset.data[idx_label]
-            dataset.targets = dataset.targets[idx_label]
-            
-            
-    # if data_subset:
-    #     dataset = Subset(dataset, list(range(0,data_subset_num)))
-
+        def transforms_Metfaces(examples):
+            images  = [transform_RGB(image=np.array(image))["image"] for image in examples["image"]]
+            return {"image": images}
+        
+        # dataset = load_dataset_builder("huggan/metfaces", cache_dir=data_path)
+        dataset = load_dataset("huggan/metfaces", cache_dir=data_path, split='train')
+        
+        if method == "mean_shift":
+            dataset.set_transform(transforms_Metfaces)
+        else:
+            dataset.set_transform(transforms_Metfaces)
+        
     return dataset
 
 

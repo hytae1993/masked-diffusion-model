@@ -28,6 +28,7 @@ from diffusers import DDPMPipeline, DDPMScheduler, UNet2DModel
 from diffusers.optimization import get_scheduler, get_cosine_schedule_with_warmup, get_constant_schedule_with_warmup, get_linear_schedule_with_warmup
 from diffusers.training_utils import EMAModel
 
+from utils.visualizer import Visualizer
 
 from trainer_masked import Trainer as BaseTrainer
 from trainer_masked_shift import Trainer as ShiftTrainer
@@ -225,6 +226,7 @@ def get_log(args, logger, dataset, total_batch_size, max_train_setps):
     logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
     logger.info(f"  Total optimization steps = {max_train_setps}")
     
+
 def resume_train(args, accelerator, num_update_steps_per_epoch):
     global_step, first_epoch    = 0, 0
     
@@ -251,15 +253,6 @@ def resume_train(args, accelerator, num_update_steps_per_epoch):
         first_epoch         = global_step // num_update_steps_per_epoch
         resume_step         = resume_global_step % (num_update_steps_per_epoch * args.gradient_accumulation_steps)
     
-    # path    = '/nas/users/hyuntae/code/doctor/masked-diffusion-model/result/code_test/oxford-flower/2023_11_18_23_21_15/time_step_100_modelTime/model/model_epoch_02401'
-    # accelerator.print(f"Resuming from checkpoint {path}")
-    # accelerator.load_state(path)
-    # global_step = int(path.split("-")[1])
-
-    # resume_global_step  = global_step * args.gradient_accumulation_steps
-    # first_epoch         = global_step // num_update_steps_per_epoch
-    # resume_step         = resume_global_step % (num_update_steps_per_epoch * args.gradient_accumulation_steps)
-        
     return global_step, first_epoch, resume_step
 
     
@@ -291,6 +284,11 @@ def main(dirs: dict, args: dict):
     logger  = get_logger(__name__, log_level="INFO")
     get_log(args, logger, dataset, total_batch_size, max_train_steps)
     
+    if accelerator.is_main_process:
+        visualizer  = Visualizer(args)
+    else:
+        visualizer  = None
+    
     if args.resume_from_checkpoint:
         global_step, first_epoch, resume_step   = resume_train(args, accelerator, num_update_steps_per_epoch)
     else:
@@ -305,7 +303,7 @@ def main(dirs: dict, args: dict):
     elif args.method.lower() == 'test':
         trainer = TestTrainer(args, dataloader, model, ema_model, optimizer, lr_scheduler, accelerator)
         
-    trainer.train(first_epoch, args.num_epochs, resume_step, global_step, dirs)
+    trainer.train(first_epoch, args.num_epochs, resume_step, global_step, dirs, visualizer)
  
 
 def save_option(args, dir_save: str):
@@ -321,6 +319,7 @@ if __name__ == '__main__':
     # ======================================================================
     # input to the [dirutilis]
     # ======================================================================
+    parser.add_argument('--use_wandb', type=eval, default=True, choices=[True, False])
     parser.add_argument('--task', help='name of the task', type=str, choices=['train', 'sample', 'dataset'], default='train')
     parser.add_argument('--content', help='name of the content', type=str, default='test_code')
     parser.add_argument('--dir_work', help='path to the working directory', type=str, default='./')

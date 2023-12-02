@@ -147,7 +147,7 @@ class Sampler:
         
         sample_per  = int(time_length / 5)
         sample_list = [sample]
-        sample_t    = [time_length - sample_per, time_length - sample_per*2, time_length - sample_per*3, time_length - sample_per*4, time_length - sample_per*5]
+        sample_t    = [time_length, time_length - sample_per, time_length - sample_per*2, time_length - sample_per*3, time_length - sample_per*4]
         
         with torch.no_grad():
             sample_progress_bar = tqdm(total=time_length, leave=False)
@@ -307,13 +307,14 @@ class Sampler:
     
     
     def _each_result_mean_shift_t(self, img: torch.Tensor, model: Module):
-        sample_list = [img]
+        sample_list = []
         noise_list  = []
         noisy_list  = []
         mask_list   = []
         
         time_length = self.args.updated_ddpm_num_steps
         
+        img = img.unsqueeze(dim=0)
         with torch.no_grad():
             each_result_t_progress_bar    = tqdm(total=time_length, leave=False)
             each_result_t_progress_bar.set_description(f"each first result of t")
@@ -369,6 +370,8 @@ class Sampler:
         grid_sample = make_grid(sample, nrow=nrow, normalize=True)
         file_sample = os.path.join(dir_save, file_sample)
         save_image(grid_sample, file_sample)
+        
+        return grid_sample
         
     
     def _save_image_multi_grid(self, sample: list, sample_t: list, dir_save: str, file_sample: str):

@@ -198,7 +198,7 @@ class Trainer:
                     self._save_inference_image(dirs, inference_image_set, epoch)
                     self._save_black_image(dirs, black_image_set, epoch)
                     self._save_sample(dirs, epoch)
-                    self._save_sample_random_t(dirs, img_set[0], epoch)
+                    # self._save_sample_random_t(dirs, img_set[0], epoch)
                     self._save_learning_curve(dirs, loss_mean_epoch, loss_std_epoch)
                     self._save_time_step(dirs, timesteps_count, epoch)
             
