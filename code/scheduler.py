@@ -181,3 +181,11 @@ class Scheduler:
         shift   = shift.to(data.device)
         data    = data - shift 
         return data
+    
+    
+    def get_weight_timesteps(self, timesteps: torch.IntTensor, power_base: torch.FloatTensor=2.0):
+        alpha   = torch.linspace(start=1, end=0, steps=self.updated_ddpm_num_steps)
+        power   = torch.pow(power_base, alpha)
+        power   = power.to(timesteps.device)
+        weight  = power[timesteps]
+        return weight

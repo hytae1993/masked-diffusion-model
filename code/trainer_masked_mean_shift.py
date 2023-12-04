@@ -81,7 +81,7 @@ class Trainer:
         self.input                 = self._shift_mean(self.input)         # make each mean of image to zero
         
         # ===================================================================================
-        # Create a mask with a random area black and obtation degraded image
+        # Create masks with random area black and obtation degraded image
         # ===================================================================================
         timesteps           = torch.randint(low=1, high=self.args.updated_ddpm_num_steps+1, size=(self.input.shape[0],), device=self.input.device)
         timesteps_count     = torch.bincount(timesteps, minlength=self.args.updated_ddpm_num_steps+1)[1:]
@@ -103,8 +103,11 @@ class Trainer:
             self.mask               = self.model(self.shifted_degrade_img, timesteps).sample
             self.reconstructed_img      = self.shifted_degrade_img + self.mask
             
-            # loss            = self._compute_loss(prediction.to(torch.float32), target.to(torch.float32))
-            self.reconstruct_loss   = self._compute_loss(self.reconstructed_img, self.shifted_input)
+            if self.loss_weight_use:
+                weight_loss_timesteps   = self.Scheduler.get_weight_timesteps(timesteps, self.loss_weight_power_base)
+                self.reconstruct_loss   = weight_loss_timesteps[:, None, None, None] * self._compute_loss(self.reconstructed_img, self.shifted_input)
+            else:
+                self.reconstruct_loss   = self._compute_loss(self.reconstructed_img, self.shifted_input)
             
             self.accelerator.backward(self.reconstruct_loss)
             
