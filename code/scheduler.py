@@ -45,8 +45,7 @@ class Scheduler:
         
         ddpm_num_steps          = len(black_area_num_pixel)
         self.ratio_list         = torch.tensor(black_area_num_pixel / self.image_size)
-        self.black_area_pixels  = black_area_num_pixel
-        
+        self.black_area_pixels  = black_area_num_pixel        
         self.updated_ddpm_num_steps = ddpm_num_steps
         
         return ddpm_num_steps
@@ -81,7 +80,8 @@ class Scheduler:
         
         unique_linear_indices = list(set(linear_indices))
         
-        black_area_num_pixel = np.array([time_list[i] for i in sorted(unique_linear_indices)[:n]])
+        # black_area_num_pixel = np.array([time_list[i] for i in sorted(unique_linear_indices)[:n]])
+        black_area_num_pixel    = np.array(sorted(unique_linear_indices)[:n])
         return black_area_num_pixel
     
     def get_extract_log_scale_random_sublist(self, time_list, n):
@@ -99,6 +99,20 @@ class Scheduler:
         black_area_num_pixel = np.array([time_list[i] for i in sorted(unique_log_indices)[:n]])
         return black_area_num_pixel
     
+    
+    def get_timesteps_epoch(self, epoch, epoch_length):
+        scale       = self.args.scheduler_num_scale_timesteps
+        timeindex   = [i for i in range(1,self.updated_ddpm_num_steps+1)]
+
+        section     = math.ceil((epoch+1) / (epoch_length / scale))
+
+        num_trained_timesteps       = self.updated_ddpm_num_steps // np.power(2, scale-section)
+
+        timesteps_used_epoch        = [timeindex[i-1] for i in range(1, self.updated_ddpm_num_steps+1) if i % np.power(2, scale-section) == 0]
+        timesteps_used_epoch[-1]    = self.updated_ddpm_num_steps    # force last t matches T
+        
+        return timesteps_used_epoch
+
     
     def get_mask(self, black_area_num):
         """

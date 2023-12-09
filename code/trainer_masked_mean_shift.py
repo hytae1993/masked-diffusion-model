@@ -51,9 +51,12 @@ class Trainer:
         
         self.global_step        = 0
         
-        self.visual_names       = ['input','degraded_img', 'degradation', 'shifted_degrade_img', 'shifted_input', 'mask', 'reconstructed_img', 'each_train_first_result_t', 'sample', 'sample_t']
+        self.visual_names       = ['input','degraded_img', 'degradation', 'shifted_degrade_img', 'shifted_input', 'mask', 'reconstructed_img', \
+                                    'each_train_first_result_t', 'sample_trained_t', 'sample_trained_t_list', 'sample_all_t', 'sample_all_t_list', \
+                                    'ema_sample_trained_t', 'ema_sample_trained_t_list', 'ema_sample_all_t', 'ema_sample_all_t_list']
         self.loss_names         = ['reconstruct_loss', 'learning_rate']
         
+        self.timesteps_used_epoch   = None
         
     def _compute_loss(self, prediction: torch.Tensor, target: torch.Tensor):
         loss    = self.criterion(prediction, target)
@@ -83,7 +86,9 @@ class Trainer:
         # ===================================================================================
         # Create masks with random area black and obtation degraded image
         # ===================================================================================
-        timesteps           = torch.randint(low=1, high=self.args.updated_ddpm_num_steps+1, size=(self.input.shape[0],), device=self.input.device)
+        # timesteps           = torch.randint(low=1, high=self.args.updated_ddpm_num_steps+1, size=(self.input.shape[0],), device=self.input.device)
+        timeindex           = torch.randint(low=0, high=len(self.timesteps_used_epoch), size=(self.input.shape[0],), device=self.input.device)
+        timesteps           = torch.index_select(torch.tensor(self.timesteps_used_epoch, device=timeindex.device), 0, timeindex)
         timesteps_count     = torch.bincount(timesteps, minlength=self.args.updated_ddpm_num_steps+1)[1:]
         T_steps             = torch.where(timesteps == self.args.updated_ddpm_num_steps)
         inference_t_steps   = torch.where(timesteps > int(self.args.updated_ddpm_num_steps/2))
@@ -103,8 +108,8 @@ class Trainer:
             self.mask               = self.model(self.shifted_degrade_img, timesteps).sample
             self.reconstructed_img      = self.shifted_degrade_img + self.mask
             
-            if self.loss_weight_use:
-                weight_loss_timesteps   = self.Scheduler.get_weight_timesteps(timesteps, self.loss_weight_power_base)
+            if self.args.loss_weight_use:
+                weight_loss_timesteps   = self.Scheduler.get_weight_timesteps(timesteps, self.args.loss_weight_power_base)
                 self.reconstruct_loss   = weight_loss_timesteps[:, None, None, None] * self._compute_loss(self.reconstructed_img, self.shifted_input)
             else:
                 self.reconstruct_loss   = self._compute_loss(self.reconstructed_img, self.shifted_input)
@@ -143,7 +148,7 @@ class Trainer:
                                 
         img_set             = [self.input, self.degradation, self.degraded_img, self.shifted_degrade_img, self.shifted_input, self.mask, self.reconstructed_img]
         
-        if self.accelerator.is_main_process:
+        if self.accelerator.is_main_process and visualizer is not None:
             losses = self.get_current_losses()
             visualizer.plot_current_losses(epoch, losses)
         
@@ -160,13 +165,9 @@ class Trainer:
         black_image_set     = [[],[],[],[],[]]
         inference_image_set = [[],[],[]]
         
-        # label   = [1 for _ in range(10)]
+        self.timesteps_used_epoch     = self.Scheduler.get_timesteps_epoch(epoch, epoch_length)
         
         for i, input in enumerate(self.dataloader, 0):
-            # print(input['label'])
-            # for j in range(len(input['label'])):
-            #     label[input['label'][j]] += 1
-                
             img_set, loss, batch_timesteps_count, black_index, inference_set = self._run_batch(i, input, epoch, epoch_length, resume_step, dirs, visualizer)
             batch_progress_bar.update(1)
             
@@ -187,8 +188,6 @@ class Trainer:
                     inference_image_set[1].append(img_set[4][inference_set[0]:inference_set[0]+1]) # prediction image of time T
                     inference_image_set[2].append(inference_set[1].item())             # time T
 
-        # print(label)
-        # exit(1)
         batch_progress_bar.close()
         return img_set, loss_batch, epoch_timesteps_count, black_image_set, inference_image_set
     
@@ -211,7 +210,7 @@ class Trainer:
         for epoch in range(epoch_start,epoch_start+epoch_length):
             start = timer()
             
-            if self.accelerator.is_main_process:
+            if self.accelerator.is_main_process and visualizer is not None:
                 visualizer.reset()
             self.dataloader.batch_sampler.batch_sampler.sampler.set_epoch(epoch)
             img_set, loss, timesteps_count, black_image_set, inference_image_set = self._run_epoch(epoch, epoch_length, resume_step, dirs, visualizer)
@@ -227,19 +226,23 @@ class Trainer:
                 loss_mean_epoch.append(loss_mean)
                 loss_std_epoch.append(loss_std)
                 
-                if epoch == epoch_start or epoch % self.args.save_images_epochs == 0 or epoch == (epoch_start+epoch_length-1):
+                if epoch == epoch_start or epoch % self.args.save_images_epochs == 0 or epoch == (epoch_start+epoch_length-1) or (epoch+1) % (epoch_length / self.args.scheduler_num_scale_timesteps) == 0:
     
                     self._save_model(dirs, epoch)
                     self._save_result_image(dirs, img_set, epoch)
-                    self._save_inference_image(dirs, inference_image_set, epoch)
+                    # self._save_inference_image(dirs, inference_image_set, epoch)
                     self._save_black_image(dirs, black_image_set, epoch)
                     self._save_train_result_each_t(dirs, img_set[0], epoch)
                     self._save_sample(dirs, epoch)
-                    # self._save_sample_random_t(dirs, img_set[0], epoch)
+                    self._save_sample_all_t(dirs, epoch)
                     self._save_learning_curve(dirs, loss_mean_epoch, loss_std_epoch)
                     self._save_time_step(dirs, timesteps_count, epoch)
+                    if self.args.use_ema:
+                        self._save_ema_sample(dirs, epoch)
+                        self._save_ema_sample_all_t(dirs, epoch)
                     # save to wandb
-                    visualizer.display_current_results(self.get_current_visuals(), epoch)
+                    if visualizer is not None:
+                        visualizer.display_current_results(self.get_current_visuals(), epoch)
             
             epoch_progress_bar.update(1)
         
@@ -420,7 +423,9 @@ class Trainer:
         plt.close(fig)
         
     def _save_black_image(self, dirs, img, epoch):
-        
+        '''
+        Save the result of trained image used at time T
+        '''
         if len(img[0]):
         
             input       = torch.cat(img[0], dim=0)    # input image
@@ -515,18 +520,41 @@ class Trainer:
  
     def _save_sample(self, dirs, epoch):
         dir_save            = dirs.list_dir['sample_img'] 
-        dir_grid_save       = dirs.list_dir['sample_grid']
 
-        sample, sample_list, sample_t = self.Sampler.sample(self.model.eval())
+        sample, sample_list = self.Sampler.sample(self.model.eval(), self.timesteps_used_epoch)
         # sample      = normalize01(sample)
-        file_save       = 'sample_{:05d}.png'.format(epoch)
-        self.sample     = self.Sampler._save_image_grid(sample, dir_save, file_save)
+        file_save                   = 'sample_{:05d}.png'.format(epoch)
+        self.sample_trained_t       = self.Sampler._save_image_grid(sample, dir_save, file_save)
         
-        self.Sampler._save_image_multi_grid(sample_list, sample_t, dir_grid_save, file_save)
-        self.sample_t   = util.make_multi_grid(sample_list, nrow=2, ncol=3) # result of t during sampling
- 
+        sample_list                 = torch.cat(sample_list, dim=0)
+        self.sample_trained_t_list  = self.Sampler._save_image_grid(sample_list, None, None)
+        
+    def _save_ema_sample(self, dirs, epoch):
+        dir_sample_save            = dirs.list_dir['ema_sample_img']
+        dir_sample_all_t_save      = dirs.list_dir['ema_sample_all_t_img']
+        
+        self.ema_model.store(self.model.parameters())
+        # model_ema.parameters => model.parameters
+        self.ema_model.copy_to(self.model.parameters())
+        
+        ema_sample, ema_sample_all_t = self.Sampler.sample(self.model.eval(), self.timesteps_used_epoch)
+        # model_ema.temp => model.parameters
+        self.ema_model.restore(self.model.parameters())
+        
+        file_ema_save                   = 'ema_sample_{:05d}.png'.format(epoch)
+        self.ema_sample_trained_t       = self.Sampler._save_image_grid(ema_sample, dir_sample_save, file_ema_save)
+        
+        file_ema_all_t_save             = 'ema_sample_all_t_{:05d}.png'.format(epoch)
+        ema_sample_all_t                = torch.cat(ema_sample_all_t, dim=0)
+        self.ema_sample_trained_t_list  = self.Sampler._save_image_grid(ema_sample_all_t, dir_sample_all_t_save, file_ema_all_t_save)
+        
 
     def _save_train_result_each_t(self, dirs, img, epoch):
+        #=====================================================
+        # degrade the original train image with each t's noise
+        # get the result about each degraded image in t
+        # it's not sampling, it just use one t to get result
+        #=====================================================
         dir_save    = dirs.list_dir['each_time_result'] 
         
         noisy_list, mask_list, sample_list = self.Sampler.result_each_t(img, self.model.eval())
@@ -572,19 +600,30 @@ class Trainer:
         
         self.each_train_first_result_t   = util.make_multi_grid([noisy_list, mask_list, sample_list], nrow=1, ncol=3)
         
-    def _save_sample_random_t(self, dirs, img, epoch):
-        dir_save    = dirs.list_dir['sample_random'] 
+    def _save_sample_all_t(self, dirs, epoch):
+        dir_save    = dirs.list_dir['sample_all_t'] 
 
-        sample_list = self.Sampler.sample_random_t(img, self.model.eval())
-        sample_list = torch.cat(sample_list, dim=0)
-        # sample      = normalize01(sample)
-        file_save   = 'sample_random_t_{:05d}.png'.format(epoch)
-        file_save   = os.path.join(dir_save, file_save)
+        self.sample_all_t, sample_all_t_list = self.Sampler.sample_all_t(self.model.eval())
         
-        nrow        = int(np.ceil(np.sqrt(len(sample_list))))
-        sample_list = normalize01(sample_list)
-        grid        = make_grid(sample_list, nrow=nrow, normalize=True)
-        save_image(grid, file_save)
+        file_save               = 'sample_all_t{:05d}.png'.format(epoch)
+        self.sample_all_t       = self.Sampler._save_image_grid(self.sample_all_t, dir_save, file_save)
+        sample_all_t_list       = torch.cat(sample_all_t_list, dim=0)
+        self.sample_all_t_list  = self.Sampler._save_image_grid(sample_all_t_list, None, None)
+        
+        
+    def _save_ema_sample_all_t(self, dirs, epoch):
+        
+        self.ema_model.store(self.model.parameters())
+        # model_ema.parameters => model.parameters
+        self.ema_model.copy_to(self.model.parameters())
+        
+        self.ema_sample_all_t, ema_sample_all_t_list = self.Sampler.sample_all_t(self.model.eval())
+        
+        self.ema_sample_all_t       = self.Sampler._save_image_grid(self.ema_sample_all_t, None, None)
+        ema_sample_all_t_list       = torch.cat(ema_sample_all_t_list, dim=0)
+        self.ema_sample_all_t_list  = self.Sampler._save_image_grid(ema_sample_all_t_list, None, None)
+        
+        self.ema_model.restore(self.model.parameters())
         
         
     def _save_model(self, dirs: dict, epoch: int):

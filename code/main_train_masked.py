@@ -25,7 +25,7 @@ from packaging import version
 
 import diffusers
 from diffusers import DDPMPipeline, DDPMScheduler, UNet2DModel
-from diffusers.optimization import get_scheduler, get_cosine_schedule_with_warmup, get_constant_schedule_with_warmup, get_linear_schedule_with_warmup
+from diffusers.optimization import get_scheduler, get_cosine_schedule_with_warmup, get_constant_schedule_with_warmup, get_linear_schedule_with_warmup, get_cosine_with_hard_restarts_schedule_with_warmup
 from diffusers.training_utils import EMAModel
 
 from utils.visualizer import Visualizer
@@ -130,6 +130,9 @@ def get_lr_scheduler(scheduler_name: str, optimizer: optim.Optimizer, dataloader
     '''
     if scheduler_name == "cosine":
         scheduler   = get_cosine_schedule_with_warmup(optimizer, num_warmup_steps=lr_warmup_steps * gradient_accumulation_steps, num_training_steps=len(dataloader)*num_epochs, num_cycles=num_cycles)
+        
+    elif scheduler_name == "hard_cosine":
+        scheduler   = get_cosine_with_hard_restarts_schedule_with_warmup(optimizer, num_warmup_steps=lr_warmup_steps * gradient_accumulation_steps, num_training_steps=len(dataloader)*num_epochs, num_cycles=num_cycles)
 
     elif scheduler_name == "constant":
         scheduler   = get_constant_schedule_with_warmup(optimizer, num_warmup_steps=lr_warmup_steps * gradient_accumulation_steps)
@@ -284,8 +287,11 @@ def main(dirs: dict, args: dict):
     logger  = get_logger(__name__, log_level="INFO")
     get_log(args, logger, dataset, total_batch_size, max_train_steps)
     
-    if accelerator.is_main_process:
-        visualizer  = Visualizer(args)
+    if args.use_wandb:
+        if accelerator.is_main_process:
+            visualizer  = Visualizer(args)
+        else:
+            visualizer  = None
     else:
         visualizer  = None
     
@@ -356,6 +362,7 @@ if __name__ == '__main__':
     parser.add_argument('--ddpm_num_steps', type=int, default=1000)
     parser.add_argument('--updated_ddpm_num_steps', help='removed duplicated time step after time scheduling', type=int, default=1000)
     parser.add_argument("--ddpm_schedule", type=str, default="linear")
+    parser.add_argument('--scheduler_num_scale_timesteps', type=int, default=1, help='1/2^n, 1/2^{n-1}, ..., 1/2^0 -> 1 use every timesteps')
     # ======================================================================
     parser.add_argument('--sample_num', help='number of samples during the training', type=int, default=100)
     parser.add_argument('--sample_epoch_ratio', help='ratio of the epoch length for the training', type=float, default=0.2)

@@ -47,17 +47,20 @@ class Sampler:
         return latent
     
     
-    def sample(self, model: Module):
+    def sample(self, model: Module, timesteps_used_epoch):
+        '''
+        Generate the sampling result about time t only used for training 
+        '''
         if self.args.method == 'base':
-            sample, sample_list, sample_t = self._sample(model) 
+            sample, sample_list, sample_t, sample_all_t = self._sample(model, timesteps_used_epoch) 
         elif self.args.method == 'shift':
-            sample, sample_list, sample_t = self._sample_shift(model)
+            sample, sample_list, sample_t, sample_all_t = self._sample_shift(model, timesteps_used_epoch)
         elif self.args.method == 'mean_shift':
-            sample, sample_list, sample_t = self._sample_mean_shift(model) 
-        return sample, sample_list, sample_t
+            sample, sample_list = self._sample_mean_shift(model, timesteps_used_epoch) 
+        return sample, sample_list
 
 
-    def _sample(self, model: Module):
+    def _sample(self, model: Module, timesteps_used_epoch):
         time_length = self.args.updated_ddpm_num_steps
       
         latent      = self._get_latent_initial(model)
@@ -65,6 +68,7 @@ class Sampler:
         
         sample_per  = int(time_length / 5)
         sample_list = [sample]
+        sample_all_list = [sample[0].unsqueeze(dim=0)]
         sample_t    = [time_length - sample_per, time_length - sample_per*2, time_length - sample_per*3, time_length - sample_per*4, time_length - sample_per*5]
         
         with torch.no_grad():
@@ -76,6 +80,7 @@ class Sampler:
                 
                 mask                = model(sample, time).sample
                 prediction          = sample + mask
+                sample_all_list.append(prediction[0].unsqueeze(dim=0))
                 
                 if t == 1:
                     sample  = prediction
@@ -93,10 +98,10 @@ class Sampler:
             # sample_progress_bar.clear()
             sample_progress_bar.close()
 
-        return sample, sample_list, sample_t
+        return sample, sample_list, sample_t, sample_all_list
     
     
-    def _sample_shift(self, model: Module):
+    def _sample_shift(self, model: Module, timesteps_used_epoch):
         time_length = self.args.updated_ddpm_num_steps
       
         latent      = self._get_latent_initial(model)
@@ -104,6 +109,7 @@ class Sampler:
         
         sample_per  = int(time_length / 5)
         sample_list = [sample]
+        sample_all_list = [sample[0].unsqueeze(dim=0)]
         sample_t    = [time_length - sample_per, time_length - sample_per*2, time_length - sample_per*3, time_length - sample_per*4, time_length - sample_per*5]
         
         with torch.no_grad():
@@ -119,6 +125,7 @@ class Sampler:
                 mask                = model(sample, time).sample
                 prediction          = sample + mask
                 prediction          = self.Scheduler.perturb_shift_inverse(prediction, shift)
+                sample_all_list.append(prediction[0].unsqueeze(dim=0))
                 
                 if t == 1:
                     sample  = prediction
@@ -136,23 +143,21 @@ class Sampler:
             # sample_progress_bar.clear()
             sample_progress_bar.close()
 
-        return sample, sample_list, sample_t
+        return sample, sample_list, sample_t, sample_all_list
     
     
-    def _sample_mean_shift(self, model: Module):
-        time_length = self.args.updated_ddpm_num_steps
-      
+    def _sample_mean_shift(self, model: Module, timesteps_used_epoch):
         latent      = self._get_latent_initial(model)
         sample      = latent.to(model.device)
         
-        sample_per  = int(time_length / 5)
-        sample_list = [sample]
-        sample_t    = [time_length, time_length - sample_per, time_length - sample_per*2, time_length - sample_per*3, time_length - sample_per*4]
+        sample_list = [sample[0].unsqueeze(dim=0)]
         
         with torch.no_grad():
-            sample_progress_bar = tqdm(total=time_length, leave=False)
-            sample_progress_bar.set_description(f"Sampling")
-            for t in range(time_length, 0, -1): # t = time_length, time_length-1, ..., 2, 1
+            sample_progress_bar = tqdm(total=len(timesteps_used_epoch), leave=False)
+            sample_progress_bar.set_description(f"Sampling about trained t")
+            # for t in reversed(timesteps_used_epoch):
+            for i in range(len(timesteps_used_epoch)-1, -1, -1):
+                t                   = timesteps_used_epoch[i]
                 time                = torch.Tensor([t])
                 time                = time.expand(self.args.batch_size).to(model.device)
                 
@@ -162,45 +167,48 @@ class Sampler:
                 mask                = model(sample, time).sample
                 prediction          = sample + mask
                 prediction          = self.Scheduler.perturb_shift_inverse(prediction, shift)
+                sample_list.append(prediction[0].unsqueeze(dim=0))
                 
-                if t == 1:
+                if i == 0:
                     sample  = prediction
-                    sample_list.append(sample)
+                    sample_list.append(sample[0].unsqueeze(dim=0))
                 else:
-                    black_area_num      = self.Scheduler.get_black_area_num_pixels_time(time-1)
+                    noise_time          = torch.Tensor([timesteps_used_epoch[i-1]])
+                    noise_time          = noise_time.expand(self.args.batch_size).to(model.device)
+                    black_area_num      = self.Scheduler.get_black_area_num_pixels_time(noise_time)
                     noisy_img, noise    = self.Scheduler.get_mean_mask(black_area_num, prediction)
                     sample              = noisy_img
                     
-                if t in sample_t:
-                    sample_list.append(prediction)
                     
                 sample_progress_bar.update(1)
             # sample_progress_bar.clear()
             sample_progress_bar.close()
 
-        return sample, sample_list, sample_t
+        return sample, sample_list
     
     
-    def sample_random_t(self, img: torch.Tensor, model: Module):
+    def sample_all_t(self, model: Module):
         '''
-        Generate final output from all time t
+        Generate the sampling result using all t include not used for training
         ex) t -> 0 -> t-1 -> 0 -> t-2 -> ... -> 1 -> 0
         '''
         if self.args.method == 'base':
-            sample_list = self._sample_random_t(img[0], model)
+            pass
         elif self.args.method == 'shift':
-            sample_list = self._sample_random_shift_t(img[0], model)
+            pass
+        elif self.args.method == 'mean_shift':
+            sample_list = self._sample_all_mean_shift_t(model)
         
         return sample_list
     
     
-    def _sample_random_t(self, img: torch.Tensor, model: Module):
-        sample_list = [img.unsqueeze(dim=0)]
+    def _sample_all_t(self, img: torch.Tensor, model: Module):
+        sample_list = [img]
         time_length = self.args.updated_ddpm_num_steps
         
         with torch.no_grad():
-            sample_random_t_progress_bar    = tqdm(total=time_length, leave=False)
-            sample_random_t_progress_bar.set_description(f"Sampling random t")
+            sample_all_t_progress_bar    = tqdm(total=time_length, leave=False)
+            sample_all_t_progress_bar.set_description(f"Sampling random t")
             for sampleTime in range(1, time_length+1):
                 
                 t_noisy = self._get_noisy(sampleTime, img, model)
@@ -218,19 +226,19 @@ class Sampler:
                     else:
                         t_noisy = self._get_noisy(sampleTime-1, prediction, model)
 
-                sample_random_t_progress_bar.update(1)
-        sample_random_t_progress_bar.close()
+                sample_all_t_progress_bar.update(1)
+        sample_all_t_progress_bar.close()
             
         return sample_list
     
     
-    def _sample_random_shift_t(self, img: torch.Tensor, model: Module):
-        sample_list = [img.unsqueeze(dim=0)]
+    def _sample_all_shift_t(self, img: torch.Tensor, model: Module):
+        sample_list = [img]
         time_length = self.args.updated_ddpm_num_steps
         
         with torch.no_grad():
-            sample_random_t_progress_bar    = tqdm(total=time_length, leave=False)
-            sample_random_t_progress_bar.set_description(f"Sampling random t")
+            sample_all_t_progress_bar    = tqdm(total=time_length, leave=False)
+            sample_all_t_progress_bar.set_description(f"Sampling all t")
             for sampleTime in range(1, time_length+1):
                 
                 shift   = self.Scheduler.get_schedule_shift_time(torch.tensor([sampleTime]))
@@ -252,10 +260,47 @@ class Sampler:
                         shift_time  = self.Scheduler.get_schedule_shift_time(time-1)
                         t_noisy     = self._get_noisy_shift(sampleTime-1, prediction, shift_time, model)
 
-                sample_random_t_progress_bar.update(1)
-        sample_random_t_progress_bar.close()
+                sample_all_t_progress_bar.update(1)
+        sample_all_t_progress_bar.close()
             
         return sample_list
+    
+    
+    def _sample_all_mean_shift_t(self, model: Module):
+        time_length = self.args.updated_ddpm_num_steps
+      
+        latent      = self._get_latent_initial(model)
+        sample      = latent.to(model.device)
+        
+        sample_list = [sample[0].unsqueeze(dim=0)]
+        
+        with torch.no_grad():
+            sample_all_t_progress_bar   = tqdm(total=time_length, leave=False)
+            sample_all_t_progress_bar.set_description(f"Sampling all t")
+            for t in range(time_length, 0, -1): # t = time_length, time_length-1, ..., 2, 1
+                time                = torch.Tensor([t])
+                time                = time.expand(self.args.batch_size).to(model.device)
+                
+                shift               = self.Scheduler.get_schedule_shift_time(time)
+                sample              = self.Scheduler.perturb_shift(sample, shift)
+                
+                mask                = model(sample, time).sample
+                prediction          = sample + mask
+                prediction          = self.Scheduler.perturb_shift_inverse(prediction, shift)
+                sample_list.append(prediction[0].unsqueeze(dim=0))
+                
+                if t == 1:
+                    sample  = prediction
+                    sample_list.append(sample[0].unsqueeze(dim=0))
+                else:
+                    black_area_num      = self.Scheduler.get_black_area_num_pixels_time(time-1)
+                    noisy_img, noise    = self.Scheduler.get_mean_mask(black_area_num, prediction)
+                    sample              = noisy_img
+                    
+                sample_all_t_progress_bar.update(1)
+            sample_all_t_progress_bar.close()
+
+        return sample, sample_list
     
     
     def result_each_t(self, img: torch.Tensor, model: Module):
@@ -368,8 +413,10 @@ class Sampler:
         nrow        = int(np.ceil(np.sqrt(batch_size)))
         sample      = normalize01(sample)
         grid_sample = make_grid(sample, nrow=nrow, normalize=True)
-        file_sample = os.path.join(dir_save, file_sample)
-        save_image(grid_sample, file_sample)
+        
+        if dir_save is not None:
+            file_sample = os.path.join(dir_save, file_sample)
+            save_image(grid_sample, file_sample)
         
         return grid_sample
         
