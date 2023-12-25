@@ -234,7 +234,7 @@ def resume_train(args, accelerator, num_update_steps_per_epoch):
     global_step, first_epoch    = 0, 0
     
     if args.resume_from_checkpoint != "latest":
-            path    = os.path.basename(args.resume_from_checkpoint)
+        path    = os.path.basename(args.resume_from_checkpoint)
     else:
         # Get the most recent checkpoint
         dirs    = os.listdir(args.output_dir)
@@ -295,7 +295,7 @@ def main(dirs: dict, args: dict):
     else:
         visualizer  = None
     
-    if args.resume_from_checkpoint:
+    if args.resume_from_checkpoint != 'False':
         global_step, first_epoch, resume_step   = resume_train(args, accelerator, num_update_steps_per_epoch)
     else:
         global_step, first_epoch, resume_step  = 0, 0, 0
@@ -359,17 +359,21 @@ if __name__ == '__main__':
     parser.add_argument('--ema_max_decay', help='the maximum decay magnitude for EMA', type=float, default=0.9999)
     parser.add_argument('--loss_weight_use', help='use weighted loss per timesteps', type=eval, default=False)
     parser.add_argument('--loss_weight_power_base', type=float, default=10.0)
+    parser.add_argument('--loss_space', type=str, default='x_0')
     parser.add_argument('--ddpm_num_steps', type=int, default=1000)
     parser.add_argument('--updated_ddpm_num_steps', help='removed duplicated time step after time scheduling', type=int, default=1000)
     parser.add_argument("--ddpm_schedule", type=str, default="linear")
     parser.add_argument('--scheduler_num_scale_timesteps', type=int, default=1, help='1/2^n, 1/2^{n-1}, ..., 1/2^0 -> 1 use every timesteps')
+    parser.add_argument("--sampling", type=str, default="base")
+    parser.add_argument('--mean_value_accumulate', type=eval, default=False, choices=[True, False])
     # ======================================================================
     parser.add_argument('--sample_num', help='number of samples during the training', type=int, default=100)
     parser.add_argument('--sample_epoch_ratio', help='ratio of the epoch length for the training', type=float, default=0.2)
-    parser.add_argument('--resume_from_checkpoint', help='resume training', type=eval, default=False)
+    parser.add_argument('--resume_from_checkpoint', help='resume training', default=False)
     parser.add_argument('--num_workers', help='number of workers', type=int, default=32)
     parser.add_argument("--checkpointing_steps", type=int, default=500)
     parser.add_argument("--save_images_epochs", type=int, default=10)
+    parser.add_argument("--output_dir", type=str, default=None)
     
     args = parser.parse_args()
    

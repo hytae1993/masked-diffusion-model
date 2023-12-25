@@ -42,7 +42,7 @@ class Sampler:
 
     def _get_latent_initial(self, model: Module):
         
-        latent      = torch.zeros(self.args.batch_size, self.args.out_channel, self.args.data_size, self.args.data_size)
+        latent      = torch.zeros(self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
         
         return latent
     
@@ -51,13 +51,24 @@ class Sampler:
         '''
         Generate the sampling result about time t only used for training 
         '''
-        if self.args.method == 'base':
-            sample, sample_list, sample_t, sample_all_t = self._sample(model, timesteps_used_epoch) 
-        elif self.args.method == 'shift':
-            sample, sample_list, sample_t, sample_all_t = self._sample_shift(model, timesteps_used_epoch)
-        elif self.args.method == 'mean_shift':
-            sample, sample_list = self._sample_mean_shift(model, timesteps_used_epoch) 
-        return sample, sample_list
+        if self.args.sampling == 'base':
+            if self.args.method == 'base':
+                sample, sample_list, sample_t, sample_all_t = self._sample(model, timesteps_used_epoch) 
+            elif self.args.method == 'shift':
+                sample, sample_list, sample_t, sample_all_t = self._sample_shift(model, timesteps_used_epoch)
+            elif self.args.method == 'mean_shift':
+                sample, sample_list = self._sample_mean_shift(model, timesteps_used_epoch) 
+            t_mask, next_t_mask = None, None
+                
+        elif self.args.sampling == 'momentum':
+            if self.args.method == 'base':
+                pass
+            elif self.args.method == 'shift':
+                pass
+            elif self.args.method == 'mean_shift':
+                sample, sample_list, t_list, t_mask, next_t_mask, t_mask_list = self._sample_mean_shift_momentum(model, timesteps_used_epoch)
+                
+        return sample, sample_list, t_list, t_mask, next_t_mask, t_mask_list
 
 
     def _sample(self, model: Module, timesteps_used_epoch):
@@ -150,7 +161,9 @@ class Sampler:
         latent      = self._get_latent_initial(model)
         sample      = latent.to(model.device)
         
-        sample_list = [sample[0].unsqueeze(dim=0)]
+        # sample_list = [sample[0].unsqueeze(dim=0)]
+        # sample_list = [sample]
+        sample_list = sample.unsqueeze(dim=1)   # 128,1,3,32,32
         
         with torch.no_grad():
             sample_progress_bar = tqdm(total=len(timesteps_used_epoch), leave=False)
@@ -159,7 +172,7 @@ class Sampler:
             for i in range(len(timesteps_used_epoch)-1, -1, -1):
                 t                   = timesteps_used_epoch[i]
                 time                = torch.Tensor([t])
-                time                = time.expand(self.args.batch_size).to(model.device)
+                time                = time.expand(self.args.sample_num).to(model.device)
                 
                 shift               = self.Scheduler.get_schedule_shift_time(time)
                 sample              = self.Scheduler.perturb_shift(sample, shift)
@@ -167,16 +180,21 @@ class Sampler:
                 mask                = model(sample, time).sample
                 prediction          = sample + mask
                 prediction          = self.Scheduler.perturb_shift_inverse(prediction, shift)
-                sample_list.append(prediction[0].unsqueeze(dim=0))
+                # sample_list.append(prediction[0].unsqueeze(dim=0))
+                # sample_list.append(prediction)
+                sample_list         = torch.cat((sample_list, prediction.unsqueeze(dim=1)), dim=1)
                 
                 if i == 0:
                     sample  = prediction
-                    sample_list.append(sample[0].unsqueeze(dim=0))
+                    # sample_list.append(sample[0].unsqueeze(dim=0))
+                    # sample_list.append(prediction)
+                    sample_list     = torch.cat((sample_list, prediction.unsqueeze(dim=1)), dim=1)
+                    
                 else:
                     noise_time          = torch.Tensor([timesteps_used_epoch[i-1]])
-                    noise_time          = noise_time.expand(self.args.batch_size).to(model.device)
+                    noise_time          = noise_time.expand(self.args.sample_num).to(model.device)
                     black_area_num      = self.Scheduler.get_black_area_num_pixels_time(noise_time)
-                    noisy_img, noise    = self.Scheduler.get_mean_mask(black_area_num, prediction)
+                    noisy_img,_,_,_     = self.Scheduler.get_mean_mask(black_area_num, prediction)
                     sample              = noisy_img
                     
                     
@@ -185,6 +203,65 @@ class Sampler:
             sample_progress_bar.close()
 
         return sample, sample_list
+    
+    
+    def _sample_mean_shift_momentum(self, model: Module, timesteps_used_epoch):
+        # x_(t-1)   = x_t - D(x`_0, t) + D(x`_0, t-1)
+        latent      = self._get_latent_initial(model)   # T0 
+        sample_0      = latent.to(model.device)
+        sample_list = sample_0.unsqueeze(dim=1)
+        t_list      = sample_0.unsqueeze(dim=1)
+        t_mask_list = sample_0.unsqueeze(dim=1)
+        
+        black_idx_t = None
+        
+        with torch.no_grad():
+            sample_progress_bar = tqdm(total=len(timesteps_used_epoch), leave=False)
+            sample_progress_bar.set_description(f"Sampling about trained t")
+            
+            for i in range(len(timesteps_used_epoch)-1, -1, -1):
+                t               = timesteps_used_epoch[i]
+                time            = torch.Tensor([t])
+                time            = time.expand(self.args.sample_num).to(model.device)
+                
+                shift           = self.Scheduler.get_schedule_shift_time(time)  
+                sample          = self.Scheduler.perturb_shift(sample_0, shift)   # x`_t
+                
+                mask            = model(sample, time).sample
+                reconstruction  = sample + mask
+                reconstruction  = self.Scheduler.perturb_shift_inverse(reconstruction, shift)   # x`_0
+                
+                sample_list     = torch.cat((sample_list, reconstruction.unsqueeze(dim=1)), dim=1)
+                
+                if i > 0:
+                    next_t          = timesteps_used_epoch[i-1]
+                    next_time       = torch.Tensor([next_t])
+                    next_time       = next_time.expand(self.args.sample_num).to(model.device)
+                        
+                    black_area_num_t                            = self.Scheduler.get_black_area_num_pixels_time(time)
+                    degraded_t,t_mask,black_idx_t, black_mean   = self.Scheduler.get_mean_mask(black_area_num_t, reconstruction, index=black_idx_t) # D(x`_0, t)
+                    black_area_num_next_t                       = self.Scheduler.get_black_area_num_pixels_time(next_time)
+                    
+                    t_mask_list  = torch.cat((t_mask_list, t_mask.unsqueeze(dim=1)), dim=1)
+                    
+                    if self.args.mean_value_accumulate:
+                        # degraded_next_t,next_t_mask,_,_               = self.Scheduler.get_mean_mask(black_area_num_next_t, reconstruction, index=black_idx_t, mean_value=black_mean) # D(x`_0, t-1)
+                        degraded_next_t,next_t_mask,black_idx_t,_               = self.Scheduler.get_mean_mask(black_area_num_next_t, reconstruction, index=black_idx_t, mean_value=black_mean) # D(x`_0, t-1)
+                    else:
+                        # degraded_next_t,next_t_mask,_,_               = self.Scheduler.get_mean_mask(black_area_num_next_t, reconstruction, index=black_idx_t) # D(x`_0, t-1)
+                        degraded_next_t,next_t_mask,black_idx_t,_               = self.Scheduler.get_mean_mask(black_area_num_next_t, reconstruction, index=black_idx_t) # D(x`_0, t-1)
+                    
+                    sample_0            = sample_0 - degraded_t + degraded_next_t
+                    t_list              = torch.cat((t_list, sample_0.unsqueeze(dim=1)), dim=1)
+                    
+                else:
+                    sample  = reconstruction
+                    # t_list  = torch.cat((t_list, sample.unsqueeze(dim=1)), dim=1)
+                    
+                sample_progress_bar.update(1)
+            sample_progress_bar.close()
+            
+            return sample, sample_list[1:], t_list, t_mask, next_t_mask, t_mask_list
     
     
     def sample_all_t(self, model: Module):
@@ -272,7 +349,9 @@ class Sampler:
         latent      = self._get_latent_initial(model)
         sample      = latent.to(model.device)
         
-        sample_list = [sample[0].unsqueeze(dim=0)]
+        # sample_list = [sample[0].unsqueeze(dim=0)]
+        # sample_list = [sample]
+        sample_list = sample.unsqueeze(dim=1)
         
         with torch.no_grad():
             sample_all_t_progress_bar   = tqdm(total=time_length, leave=False)
@@ -286,12 +365,17 @@ class Sampler:
                 
                 mask                = model(sample, time).sample
                 prediction          = sample + mask
-                prediction          = self.Scheduler.perturb_shift_inverse(prediction, shift)
-                sample_list.append(prediction[0].unsqueeze(dim=0))
-                
+                # prediction          = self.Scheduler.perturb_shift_inverse(prediction, shift)
+                prediction          = self._shift_mean(prediction)
+                # sample_list.append(prediction[0].unsqueeze(dim=0))
+                # sample_list.append(prediction)
+                sample_list         = torch.cat((sample_list, prediction.unsqueeze(dim=1)), dim=1)
+        
                 if t == 1:
                     sample  = prediction
-                    sample_list.append(sample[0].unsqueeze(dim=0))
+                    # sample_list.append(sample[0].unsqueeze(dim=0))
+                    # sample_list.append(sample)
+                    sample_list         = torch.cat((sample_list, prediction.unsqueeze(dim=1)), dim=1)
                 else:
                     black_area_num      = self.Scheduler.get_black_area_num_pixels_time(time-1)
                     noisy_img, noise    = self.Scheduler.get_mean_mask(black_area_num, prediction)
@@ -408,17 +492,32 @@ class Sampler:
         return sample_shift
 
 
-    def _save_image_grid(self, sample: torch.Tensor, dir_save: str, file_sample: str):
+    def _save_image_grid(self, sample: torch.Tensor, dir_save=None, file_sample=None):
         batch_size  = sample.shape[0]
         nrow        = int(np.ceil(np.sqrt(batch_size)))
         sample      = normalize01(sample)
         grid_sample = make_grid(sample, nrow=nrow, normalize=True)
         
-        if dir_save is not None:
+        if dir_save is not None and file_sample is not None:
             file_sample = os.path.join(dir_save, file_sample)
             save_image(grid_sample, file_sample)
         
         return grid_sample
+    
+    
+    def _save_multi_index_image_grid(self, sample: torch.Tensor, option=None):
+        # sample.shape = batch_size, timesteps, channle, height, width
+        num_timesteps   = sample.shape[1]
+        nrow            = int(np.ceil(np.sqrt(num_timesteps))) 
+        grid            = []
+        for i in range(sample.shape[0]):
+            if option == 'skip_first':
+                sample_i   = normalize01(sample[i][1:])
+            else:
+                sample_i   = normalize01(sample[i])
+            grid.append(make_grid(sample_i, nrow=nrow, normalize=True))
+            
+        return grid
         
     
     def _save_image_multi_grid(self, sample: list, sample_t: list, dir_save: str, file_sample: str):
@@ -486,3 +585,10 @@ class Sampler:
         grid_data   = make_grid(data, nrow=nrow_batch, normalize=True)
         file_save   = os.path.join(dir_save, file_save)
         save_image(grid_data, file_save)
+
+
+    def _shift_mean(self, img: torch.Tensor):
+        mean    = img.mean(dim=(1,2,3), keepdim=True)
+        img     = img - mean
+        
+        return img

@@ -106,9 +106,12 @@ class Scheduler:
 
         section     = math.ceil((epoch+1) / (epoch_length / scale))
 
-        num_trained_timesteps       = self.updated_ddpm_num_steps // np.power(2, scale-section)
-
-        timesteps_used_epoch        = [timeindex[i-1] for i in range(1, self.updated_ddpm_num_steps+1) if i % np.power(2, scale-section) == 0]
+        # num_trained_timesteps       = self.updated_ddpm_num_steps // np.power(2, scale-section)
+        try:
+            timesteps_used_epoch        = [timeindex[i-1] for i in range(1, self.updated_ddpm_num_steps+1) if i % np.power(2, scale-section) == 0]
+        except ValueError:
+            timesteps_used_epoch        = [timeindex[i-1] for i in range(1, self.updated_ddpm_num_steps+1) if i % np.power(2, 0) == 0]
+            
         timesteps_used_epoch[-1]    = self.updated_ddpm_num_steps    # force last t matches T
         
         return timesteps_used_epoch
@@ -139,38 +142,49 @@ class Scheduler:
         return masks
     
     
-    def get_mean_mask(self, black_area_num, img):
+    def get_mean_mask(self, black_area_num, img, index=None, mean_value=None):
         """
         Generate masks with mean of selected areas for each channel in the batch.
 
         Parameters:
         - black_area_num
         - img
+        - idx
 
         Returns:
         - noisy_img: Input image in which areas to be removed are filled with their mean value
         - mean_masks: Masks filled with average values for areas to be removed, shape (batch_size, 1, height, width).
+        - black_idx: 
         """
         masks = torch.ones((len(black_area_num), img.shape[1], self.height, self.width)).to(img.device)
-
+        
+        black_idx   = []
         for i in range(len(black_area_num)):
             num_black_pixels = black_area_num[i].int()
+            
+            if index != None:
+                black_pixels    = random.sample(index[i], num_black_pixels)
+            
+            else:
+                black_pixels = random.sample(range(self.height * self.width), num_black_pixels)
+                black_pixels = [(idx // self.width, idx % self.width) for idx in black_pixels]
 
-            black_pixels = random.sample(range(self.height * self.width), num_black_pixels)
-
-            black_pixels = [(idx // self.width, idx % self.width) for idx in black_pixels]
+            black_idx.append(black_pixels)
 
             for j, k in black_pixels:
                 for l in range(img.shape[1]):
                     masks[i, l, j, k] = 0.0
-                    
+                        
         sum_pixel   = (img * (1-masks)).sum(dim=(1,2,3), keepdim=True)
-        mean_pixel  = sum_pixel / (1-masks).sum(dim=(1,2,3), keepdim=True)
+        if mean_value == None:
+            mean_pixel  = sum_pixel / (1-masks).sum(dim=(1,2,3), keepdim=True)
+        else: 
+            mean_pixel  = mean_value
         
         noisy_img   = ((1-masks) * mean_pixel) + masks * img
         mean_masks  = ((1-masks) * mean_pixel) + masks
         
-        return noisy_img, mean_masks
+        return noisy_img, mean_masks, black_idx, mean_pixel
     
     
     def get_schedule_shift_time(self, timesteps: torch.IntTensor) -> torch.FloatTensor:
