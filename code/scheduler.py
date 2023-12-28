@@ -193,6 +193,8 @@ class Scheduler:
         timesteps   = timesteps.int()
         ratio       = torch.index_select(self.ratio_list.to(timesteps.device), 0, timesteps-1)
         shift_time  = random * ratio
+        # reverse_ratio   = torch.index_select(torch.flip(self.ratio_list, [0]).to(timesteps.device), 0, timesteps-1)
+        # shift_time  = random * reverse_ratio
         shift_time  = shift_time.to(self.args.weight_dtype)
         return shift_time
     
