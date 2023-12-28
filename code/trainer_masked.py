@@ -12,12 +12,14 @@ import matplotlib.pyplot as plt
 import os
 import cv2
 import random
+from collections import OrderedDict
 
 from tqdm.auto import tqdm
 
 from sampler import Sampler
 from scheduler import Scheduler
 from utils.datautils import normalize01
+from utils import util
 
 # ===============================================================================================
 # Generete image with masked diffusion model - input: image & time - Base code of masked DDPM
@@ -49,44 +51,73 @@ class Trainer:
         
         self.global_step        = 0
         
+        if self.args.sampling == 'momentum':
+            if self.args.loss_space == 'x_0':
+                self.visual_names       = ['input','degraded_img', 'degradation', 'mask', 'reconstructed_img', \
+                                        'sample_result', 'sample_trained_x_0_list', 'sample_trained_t_list', 'sample_trained_mask_list', 't_mask', 'next_t_mask', \
+                                        'ema_sample_result', 'ema_sample_trained_x_0_list', 'ema_sample_trained_t_list', 'ema_sample_trained_mask_list', 'ema_t_mask', 'ema_next_t_mask']
+            elif self.args.loss_space == 'time':
+                self.visual_names       = ['input','degraded_img', 'degradation', 'mask', 'reconstructed_img', 're_degraded_img', \
+                                        'sample_result', 'sample_trained_x_0_list', 'sample_trained_t_list', 'sample_trained_mask_list', 't_mask', 'next_t_mask', \
+                                        'ema_sample_result', 'ema_sample_trained_x_0_list', 'ema_sample_trained_t_list', 'ema_sample_trained_mask_list', 'ema_t_mask', 'ema_next_t_mask']
+        elif self.args.sampling == 'base':
+            if self.args.loss_space == 'x_0':
+                self.visual_names       = ['input','degraded_img', 'degradation', 'mask', 'reconstructed_img', \
+                                        'sample_trained_t', 'sample_trained_t_list', 'ema_sample_trained_t', 'ema_sample_trained_t_list']
+            elif self.args.loss_space == 'time':
+                self.visual_names       = ['input','degraded_img', 'degradation', 'mask', 'reconstructed_img', 're_degraded_img', \
+                                        'sample_trained_t', 'sample_trained_t_list', 'ema_sample_trained_t', 'ema_sample_trained_t_list']
+                
+        self.loss_names         = ['reconstruct_loss', 'learning_rate', 'mean']
+        
+        self.timesteps_used_epoch   = None
         
     def _compute_loss(self, prediction: torch.Tensor, target: torch.Tensor):
         loss    = self.criterion(prediction, target)
         
         return loss
+    
+    def _shift_mean(self, img: torch.Tensor):
+        mean    = img.mean(dim=(1,2,3), keepdim=True)
+        img     = img - mean
+        
+        return img
          
-    def _run_batch(self, batch: int, input, epoch: int, epoch_length: int, resume_step: int, dirs: dict):
+    def _run_batch(self, batch: int, input, epoch: int, epoch_length: int, resume_step: int, dirs: dict, visualizer):
         # print(input)
         if 'huggingface' in self.args.dir_dataset:
-            img     = input["image"]
-            label   = input["label"]
+            try:
+                self.input     = input["image"]
+                self.label   = input["label"]
+            except KeyError:
+                self.input     = input["image"]
         else:
-            img     = input
-            
-        img                 = img.to(self.args.weight_dtype)
+            self.input     = input[0]
+
+        self.input                 = self.input.to(self.args.weight_dtype)
+        self.input                 = self._shift_mean(self.input)         # make each mean of image to zero
         
         # ===================================================================================
-        # Create a mask with a random area black and obtation generator prediction
-        timesteps           = torch.randint(low=1, high=self.args.updated_ddpm_num_steps+1, size=(img.shape[0],), device=img.device)
+        # Create masks with random area black and obtation degraded image
+        # ===================================================================================
+        # timesteps           = torch.randint(low=1, high=self.args.updated_ddpm_num_steps+1, size=(self.input.shape[0],), device=self.input.device)
+        timeindex           = torch.randint(low=0, high=len(self.timesteps_used_epoch), size=(self.input.shape[0],), device=self.input.device)
+        timesteps           = torch.index_select(torch.tensor(self.timesteps_used_epoch, device=timeindex.device), 0, timeindex)
         timesteps_count     = torch.bincount(timesteps, minlength=self.args.updated_ddpm_num_steps+1)[1:]
         T_steps             = torch.where(timesteps == self.args.updated_ddpm_num_steps)
         inference_t_steps   = torch.where(timesteps > int(self.args.updated_ddpm_num_steps/2))
         
-        black_area_num      = self.Scheduler.get_black_area_num_pixels_time(timesteps)
+        black_area_num      = self.Scheduler.get_black_area_num_pixels_time(timesteps)      # get number of removed pixels at each timestep 
         
-        noise               = self.Scheduler.get_mask(black_area_num)
-        noise               = noise.to(img.device)
-        
-        noisy_img           = img * noise
+        self.degraded_img, self.degradation, black_idx, _   = self.Scheduler.get_mean_mask(black_area_num, self.input)
         
         with self.accelerator.accumulate(self.model):
-            # mask            = self.model(noisy_img, black_area_ratio).sample
-            mask            = self.model(noisy_img, timesteps).sample
-            prediction      = noisy_img + mask
+            self.mask               = self.model(self.degraded_img, timesteps).sample
+            self.reconstructed_img  = self.degraded_img + self.mask
             
-            loss            = self._compute_loss(prediction.to(torch.float32), img.to(torch.float32))
+            self.reconstruct_loss   = self._compute_loss(self.reconstructed_img, self.input)
             
-            self.accelerator.backward(loss)
+            self.accelerator.backward(self.reconstruct_loss)
             
             if self.accelerator.sync_gradients:
                 self.accelerator.clip_grad_norm_(self.model.parameters(), 1.0)
@@ -105,8 +136,10 @@ class Trainer:
                     save_path   = os.path.join(dirs.list_dir['checkpoint'], f"checkpoint-{self.global_step}")
                     self.accelerator.save_state(save_path)
         
-        lr  = self.lr_scheduler.get_last_lr()[0]
-        self.lr_list.append(lr)
+        self.mean   = self.reconstructed_img.mean()
+        
+        self.learning_rate  = self.lr_scheduler.get_last_lr()[0]
+        self.lr_list.append(self.learning_rate)
         self.accelerator.wait_for_everyone()
         
         black_image_index       = None
@@ -118,13 +151,18 @@ class Trainer:
             inference_image_index   = inference_t_steps[0][0]
             inference_check_set = [inference_image_index, timesteps[inference_image_index]]
                                 
-        img_set             = [img, noise, noisy_img, mask, prediction]
+        img_set             = [self.input, self.degradation, self.degraded_img, self.mask, self.reconstructed_img]
         
-        return img_set, loss.item(), timesteps_count, black_image_index, inference_check_set
+        if self.accelerator.is_main_process and visualizer is not None:
+            losses = self.get_current_losses()
+            visualizer.plot_current_losses(epoch, losses)
+        
+        return img_set, self.reconstruct_loss.item(), self.mean.item(), timesteps_count, black_image_index, inference_check_set
 
 
-    def _run_epoch(self, epoch: int, epoch_length: int, resume_step: int, dirs: dict):
+    def _run_epoch(self, epoch: int, epoch_length: int, resume_step: int, dirs: dict, visualizer):
         loss_batch              = []
+        mean_batch              = []
         epoch_timesteps_count   = torch.zeros(self.args.updated_ddpm_num_steps, dtype=torch.int)
         
         batch_progress_bar   = tqdm(total=len(self.dataloader), disable=not self.accelerator.is_local_main_process, leave=False)
@@ -133,14 +171,16 @@ class Trainer:
         black_image_set     = [[],[],[],[],[]]
         inference_image_set = [[],[],[]]
         
+        self.timesteps_used_epoch     = self.Scheduler.get_timesteps_epoch(epoch, epoch_length)
+        
         for i, input in enumerate(self.dataloader, 0):
-            
-            img_set, loss, batch_timesteps_count, black_index, inference_set = self._run_batch(i, input, epoch, epoch_length, resume_step, dirs)
+            img_set, loss, mean, batch_timesteps_count, black_index, inference_set = self._run_batch(i, input, epoch, epoch_length, resume_step, dirs, visualizer)
             batch_progress_bar.update(1)
             
             if self.accelerator.is_main_process: 
                 
                 loss_batch.append(loss)
+                mean_batch.append(mean)
                 epoch_timesteps_count += batch_timesteps_count.cpu()
                 
                 if len(black_image_set[0]) < self.args.batch_size and black_index is not None:
@@ -155,249 +195,89 @@ class Trainer:
                     inference_image_set[1].append(img_set[4][inference_set[0]:inference_set[0]+1]) # prediction image of time T
                     inference_image_set[2].append(inference_set[1].item())             # time T
 
-
         batch_progress_bar.close()
-        return img_set, loss_batch, epoch_timesteps_count, black_image_set, inference_image_set
+        return img_set, loss_batch, mean_batch, epoch_timesteps_count, black_image_set, inference_image_set
     
     
-    def train(self, epoch_start: int, epoch_length: int, resume_step: int, global_step: int, dirs: dict):
+    def train(self, epoch_start: int, epoch_length: int, resume_step: int, global_step: int, dirs: dict, visualizer):
         
         updated_ddpm_num_steps              = self.Scheduler.update_ddpm_num_steps(self.args.ddpm_num_steps)
         self.args.updated_ddpm_num_steps    = updated_ddpm_num_steps
         
         epoch_length    = epoch_length
         epoch_start     = epoch_start
+        self.global_step = global_step
+        
         loss_mean_epoch = []
         loss_std_epoch  = []
        
-        self.model.train()
-        
-        self.global_step = global_step
-       
         epoch_progress_bar   = tqdm(total=epoch_length, disable=not self.accelerator.is_local_main_process)
         epoch_progress_bar.set_description(f"Epoch ")
+        self.model.train()
         for epoch in range(epoch_start,epoch_start+epoch_length):
             start = timer()
-            self.dataloader.batch_sampler.batch_sampler.sampler.set_epoch(epoch)
-            img_set, loss, timesteps_count, black_image_set, inference_image_set = self._run_epoch(epoch, epoch_length, resume_step, dirs)
+            
+            if self.accelerator.is_main_process and visualizer is not None:
+                visualizer.reset()
+            # self.dataloader.batch_sampler.batch_sampler.sampler.set_epoch(epoch)
+            img_set, loss, mean, timesteps_count, black_image_set, inference_image_set = self._run_epoch(epoch, epoch_length, resume_step, dirs, visualizer)
             
             end = timer()
             elapsed_time = end - start
             
             if self.accelerator.is_main_process:
-                loss_mean     = statistics.mean(loss)
-                loss_std      = statistics.stdev(loss, loss_mean)
+                loss_mean       = statistics.mean(loss)
+                loss_std        = statistics.stdev(loss, loss_mean)
+                self.reconstruct_loss   = loss_mean
+                
+                mean_mean       = statistics.mean(mean)
+                self.mean       = mean_mean
 
                 loss_mean_epoch.append(loss_mean)
                 loss_std_epoch.append(loss_std)
-
-                if epoch == epoch_start or epoch % self.args.save_images_epochs == 0 or epoch == (epoch_start+epoch_length-1):
+                
+                if epoch > 0 and epoch % self.args.save_images_epochs == 0 or epoch == (epoch_start+epoch_length-1) or (epoch+1) % (epoch_length / self.args.scheduler_num_scale_timesteps) == 0:
+                # if epoch == epoch_start or epoch % self.args.save_images_epochs == 0 or epoch == (epoch_start+epoch_length-1) or (epoch+1) % (epoch_length / self.args.scheduler_num_scale_timesteps) == 0:
     
                     self._save_model(dirs, epoch)
-                    self._save_result_image(dirs, img_set, epoch)
-                    self._save_inference_image(dirs, inference_image_set, epoch)
-                    self._save_black_image(dirs, black_image_set, epoch)
                     self._save_sample(dirs, epoch)
-                    # self._save_sample_random_t(dirs, img_set[0], epoch)
                     self._save_learning_curve(dirs, loss_mean_epoch, loss_std_epoch)
                     self._save_time_step(dirs, timesteps_count, epoch)
+                    if self.args.use_ema:
+                        self._save_ema_sample(dirs, epoch)
+                    # save to wandb
+                    if visualizer is not None:
+                        visualizer.display_current_results(self.get_current_visuals(), epoch)
             
             epoch_progress_bar.update(1)
         
         epoch_progress_bar.close()
         
     
-    def _save_inference_image(self, dirs, inference_set, epoch):
-        input               = torch.cat(inference_set[0], dim=0)
-        prediction          = torch.cat(inference_set[1], dim=0)
-        timesteps           = torch.tensor(inference_set[2], device=input.device) - 1
+    def get_current_visuals(self):
+        """Return visualization images. train.py will display these images with visdom, and save the images to a HTML"""
+        visual_ret = OrderedDict()
+        for name in self.visual_names:
+            if isinstance(name, str):
+                visual_ret[name] = getattr(self, name)
+        return visual_ret
+    
+    
+    def get_current_losses(self):
+        """Return traning losses / errors. train.py will print out these errors on console, and save them to a file"""
+        errors_ret = OrderedDict()
+        for name in self.loss_names:
+            if isinstance(name, str):
+                errors_ret[name] = float(getattr(self, name))  # float(...) works for both scalar tensor and float number
+        return errors_ret
+    
         
-        black_area_pixels   = self.Scheduler.get_black_area_num_pixels_time(timesteps)
-        noise               = self.Scheduler.get_mask(black_area_pixels)
-        noise               = noise.to(input.device)
-        
-        noisy_img           = prediction * noise
-        mask                = self.model(noisy_img, timesteps).sample
-        new_prediction      = noisy_img + mask
-        
-        # input predict new_predict
-        # noise   noisy     output   
-        inf_dir_save        = dirs.list_dir['inference_grid']
-        batch_size          = input.shape[0]
-        nrow                = int(np.ceil(np.sqrt(batch_size)))
-        
-        input               = normalize01(input)
-        prediction          = normalize01(prediction)
-        new_prediction      = normalize01(new_prediction)
-        noise               = normalize01(noise)
-        noisy_img           = normalize01(noisy_img)
-        mask                = normalize01(mask)
-        
-        grid_input          = make_grid(input, nrow=nrow, normalize=True)
-        grid_predict        = make_grid(prediction, nrow=nrow, normalize=True)
-        grid_new_predict    = make_grid(new_prediction, nrow=nrow, normalize=True)
-        grid_noise          = make_grid(noise, nrow=nrow, normalize=True)
-        grid_noisy          = make_grid(noisy_img, nrow=nrow, normalize=True)
-        grid_mask           = make_grid(mask, nrow=nrow, normalize=True)
-        
-        inf_final           = 'inference_epoch_{:05d}.png'.format(epoch)
-        inf_final           = os.path.join(inf_dir_save, inf_final)
-        
-        grid_input          = grid_input.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
-        grid_predict        = grid_predict.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
-        grid_new_predict    = grid_new_predict.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
-        grid_noise          = grid_noise.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
-        grid_noisy          = grid_noisy.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
-        grid_mask           = grid_mask.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
-        
-        fig, axarr = plt.subplots(2,3,figsize=(15, 10)) 
-        axarr[0][0].imshow(cmap='gray', X=grid_input)
-        axarr[0][1].imshow(cmap='gray', X=grid_predict)
-        axarr[0][2].imshow(cmap='gray', X=grid_new_predict)
-        axarr[1][0].imshow(cmap='gray', X=grid_noise)
-        axarr[1][1].imshow(cmap='gray', X=grid_noisy)
-        axarr[1][2].imshow(cmap='gray', X=grid_mask)
-        
-        axarr[0][0].set_title("input")
-        axarr[0][1].set_title("predict")
-        axarr[0][2].set_title("new predict")
-        axarr[1][0].set_title("noise")
-        axarr[1][1].set_title("noisy")
-        axarr[1][2].set_title("output")
-        
-        axarr[0][0].axis("off")
-        axarr[0][1].axis("off")
-        axarr[0][2].axis("off")
-        axarr[1][0].axis("off")
-        axarr[1][1].axis("off")
-        axarr[1][2].axis("off")
-        plt.tight_layout()
-        fig.savefig(inf_final)
-        plt.close(fig)
-        
-        
-    def _save_result_image(self, dirs, img, epoch):
-        input       = img[0]    # input image
-        noise       = img[1]    # randomly generated mask
-        noisy       = img[2]    # noise * input
-        mask        = img[3]    # output of model
-        predict     = img[4]    # output of model + noisy image
-        batch_size  = input.shape[0]
-        nrow        = int(np.ceil(np.sqrt(batch_size)))
-        
-        input_dir_save      = dirs.list_dir['train_img'] 
-        file_input          = 'input_epoch_{:05d}.png'.format(epoch)
-        file_input          = os.path.join(input_dir_save, file_input)
-        input               = normalize01(input)
-        grid_input          = make_grid(input, nrow=nrow, normalize=True)
-        save_image(grid_input, file_input)
-        
-        noise_dir_save      = dirs.list_dir['noise_img']
-        file_noise          = 'noise_epoch_{:05d}.png'.format(epoch)
-        file_noise          = os.path.join(noise_dir_save, file_noise)
-        noise               = normalize01(noise)
-        grid_noise          = make_grid(noise, nrow=nrow, normalize=True)
-        save_image(grid_noise, file_noise)
-        
-        noisy_dir_save      = dirs.list_dir['noisy_img']
-        file_noisy          = 'noisy_epoch_{:05d}.png'.format(epoch)
-        file_noisy          = os.path.join(noisy_dir_save, file_noisy)
-        noisy               = normalize01(noisy)
-        grid_noisy          = make_grid(noisy, nrow=nrow, normalize=True)
-        save_image(grid_noisy, file_noisy)
-        
-        mask_dir_save       = dirs.list_dir['mask_img']
-        file_mask           = 'mask_epoch_{:05d}.png'.format(epoch)
-        file_mask           = os.path.join(mask_dir_save, file_mask)
-        mask                = normalize01(mask)
-        grid_mask           = make_grid(mask, nrow=nrow, normalize=True)
-        save_image(grid_mask, file_mask)
-        
-        predict_dir_save    = dirs.list_dir['predict_img']
-        file_final          = 'predict_epoch_{:05d}.png'.format(epoch)
-        file_final          = os.path.join(predict_dir_save, file_final)
-        predict             = normalize01(predict)
-        grid_final          = make_grid(predict, nrow=nrow, normalize=True)
-        save_image(grid_final, file_final)
-        
-        img_dir_save        = dirs.list_dir['img']
-        img_final           = 'img_epoch_{:05d}.png'.format(epoch)
-        img_final           = os.path.join(img_dir_save, img_final)
-        grid_input          = grid_input.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
-        grid_noisy          = grid_noisy.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
-        grid_noise          = grid_noise.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
-        grid_mask           = grid_mask.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
-        grid_final          = grid_final.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
-        
-        grid                = [grid_input, grid_noise, grid_noisy, grid_mask, grid_final]
-        grid_name           = ['input', 'noise', 'noisy', 'mask', 'final']
-        fig = plt.figure(figsize=(15, 10))
-        positions = [(0, 0, 2), (0, 2, 2), (0, 4, 2), (1, 1, 2), (1, 3, 2)]
-        positions = [(0, 1, 2), (0, 3, 2), (1, 0, 2), (1, 2, 2), (1, 4, 2)]
-        for i, (row, col, colspan) in enumerate(positions):
-            ax = plt.subplot2grid((2, 6), (row, col), colspan=colspan)
-            ax.imshow(cmap='gray', X=grid[i])
-            ax.set_title(grid_name[i])
-            ax.axis("off")
-
-        plt.tight_layout()
-        fig.savefig(img_final)
-        plt.close(fig)
-        
-    def _save_black_image(self, dirs, img, epoch):
-        
-        if len(img[0]):
-        
-            input       = torch.cat(img[0], dim=0)    # input image
-            noisy       = torch.cat(img[1], dim=0)    # noise * input
-            mask        = torch.cat(img[2], dim=0)    # output of model
-            predict     = torch.cat(img[3], dim=0)    # output of model + noisy image
-            noise       = torch.cat(img[4], dim=0)    # noise
-            batch_size  = input.shape[0]
-            nrow        = int(np.ceil(np.sqrt(batch_size)))
-            
-            input       = normalize01(input)
-            noisy       = normalize01(noisy)
-            mask        = normalize01(mask)
-            predict     = normalize01(predict)
-            noise       = normalize01(noise)
-            
-            grid_input          = make_grid(input, nrow=nrow, normalize=True)
-            grid_noisy          = make_grid(noisy, nrow=nrow, normalize=True)
-            grid_mask           = make_grid(mask, nrow=nrow, normalize=True)
-            grid_final          = make_grid(predict, nrow=nrow, normalize=True)
-            grid_noise          = make_grid(noise, nrow=nrow, normalize=True)
-            
-            img_dir_save        = dirs.list_dir['black_res_img']
-            img_final           = 'black_epoch_{:05d}.png'.format(epoch)
-            img_final           = os.path.join(img_dir_save, img_final)
-            grid_input          = grid_input.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
-            grid_noisy          = grid_noisy.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
-            grid_mask           = grid_mask.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
-            grid_final          = grid_final.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
-            grid_noise          = grid_noise.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
-            
-            grid                = [grid_input, grid_noise, grid_noisy, grid_mask, grid_final]
-            grid_name           = ['input', 'noise', 'noisy', 'mask', 'final']
-            fig = plt.figure(figsize=(15, 10))
-            positions = [(0, 0, 2), (0, 2, 2), (0, 4, 2), (1, 1, 2), (1, 3, 2)]
-            for i, (row, col, colspan) in enumerate(positions):
-                ax = plt.subplot2grid((2, 6), (row, col), colspan=colspan)
-                ax.imshow(cmap='gray', X=grid[i])
-                ax.set_title(grid_name[i])
-                ax.axis("off")
-                
-            plt.tight_layout()
-            fig.savefig(img_final)
-            plt.close(fig)
-                    
-
     def _save_learning_curve(self, dirs, loss_mean, loss_std):
         dir_save    = dirs.list_dir['train_loss'] 
         # file_loss = 'loss_epoch_{:05d}.png'.format(epoch)
         file_loss = 'loss.png'
         file_loss = os.path.join(dir_save, file_loss)
-        fig = plt.figure()
+        fig = plt.figure(figsize=(16, 8))
         
         plt.subplot(1,2,1)
         plt.plot(np.array(loss_mean), color='red')
@@ -420,16 +300,16 @@ class Trainer:
         file_loss           = 'time_step_{}.png'.format(epoch)
         file_loss           = os.path.join(dir_save, file_loss)
         
-        time_step           = np.array(time_step)
+        self.time_step      = np.array(time_step)
         time                = range(1, len(time_step) + 1)
         
-        fig = plt.figure()
+        fig = plt.figure(figsize=(16,8))
         
-        plt.subplot(1,2,1)
-        plt.plot(time, time_step, color='red')
+        plt.subplot(2,1,1)
+        plt.plot(time, self.time_step, color='red')
         plt.title('number of time step')
         
-        plt.subplot(1,2,2)
+        plt.subplot(2,1,2)
         plt.plot(time, black_area_pixels, color='red')
         plt.title('number of pixels in each time step')
         
@@ -440,70 +320,132 @@ class Trainer:
  
     def _save_sample(self, dirs, epoch):
         dir_save            = dirs.list_dir['sample_img'] 
-        dir_grid_save       = dirs.list_dir['sample_grid']
 
-        sample, sample_list, sample_t = self.Sampler.sample(self.model.eval())
+        sample, sample_list, t_list, t_mask, next_t_mask, t_mask_list = self.Sampler.sample(self.model.eval(), self.timesteps_used_epoch)
         # sample      = normalize01(sample)
-        file_save       = 'sample_{:05d}.png'.format(epoch)
-        self.Sampler._save_image_grid(sample, dir_save, file_save)
-        self.Sampler._save_image_multi_grid(sample_list, sample_t, dir_grid_save, file_save)
-
-        '''
-        (sample, sample_time) = sampler.sample(model_info, self.model.eval())
-        file_save       = 'sample_{:05d}.png'.format(epoch)
-        file_save_time  = 'sample_{:05d}_time.png'.format(epoch)
-        sample          = normalize01(sample)
-        sampler._save_image_grid(sample, dir_save, file_save)
-        # sampler._save_image_grid(sample_time, dir_save, file_save_time)
-        ''' 
+        file_save                   = 'sample_{:05d}.png'.format(epoch)
+        self.sample_result          = self.Sampler._save_image_grid(sample, dir_save, file_save)
+        if self.args.sampling == 'momentum':
+            self.t_mask                 = self.Sampler._save_image_grid(t_mask)
+            self.next_t_mask            = self.Sampler._save_image_grid(next_t_mask)
         
-        '''
-        num_trial = 10 
-        sample_interp = sampler.sample_interpolate(model_info, self.model.eval(), num_trial)
-        for trial in range(num_trial):
-            sample_interp_trial = sample_interp[trial]
-            file_save_interp    = 'sample_epoch_{:05d}_{:03d}_interp_{:02d}.png'.format(args.epoch, i+1, trial+1) 
-            sample_interp_trial = normalize01(sample_interp_trial)
-            sampler._save_image_grid(sample_interp_trial, dir_save, file_save_interp)
-        ''' 
-    
-        # if (self.ema_model is not None) and (self.ema_model.ema_start <= epoch):
-        #     '''
-        #     (sample, sample_time) = sampler.sample(model_info, self.ema.eval())
-        #     file_save       = 'sample_{:05d}_ema.png'.format(epoch)
-        #     file_save_time  = 'sample_{:05d}_ema_time.png'.format(epoch)
-        #     sample = normalize01(sample)
-        #     sampler._save_image_grid(sample, dir_save, file_save)
-        #     sampler._save_image_grid(sample_time, dir_save, file_save_time)
-        #     '''
-        #     sample = sampler.sample(self.ema_model.eval())
-        #     # sample = normalize01(sample)
-        #     file_save = 'sample_{:05d}_ema.png'.format(epoch)
-        #     sampler._save_image_grid(sample, dir_save, file_save)
-            
-        #     '''
-        #     sample_interp = sampler.sample_interpolate(model_info, self.ema.eval(), num_trial)
-        #     for trial in range(num_trial):
-        #         sample_interp_trial = sample_interp[trial]
-        #         file_save_interp    = 'sample_epoch_{:05d}_{:03d}_interp_{:02d}_ema.png'.format(args.epoch, i+1, trial+1) 
-        #         sample_interp_trial = normalize01(sample_interp_trial)
-        #         sampler._save_image_grid(sample_interp_trial, dir_save, file_save_interp)
-        #    ''' 
- 
- 
-    def _save_sample_random_t(self, dirs, img, epoch):
-        dir_save    = dirs.list_dir['sample_random'] 
+        # sample_list                 = torch.cat(sample_list, dim=0)
+        self.sample_trained_x_0_list    = self.Sampler._save_multi_index_image_grid(sample_list, option='skip_first')    # result of x_0 for each t
+        # self.sample_trained_t_list  = self.Sampler._save_image_grid(sample_list, None, None)
+        # self.sample_trained_t_list  = util.make_multi_grid(sample_list, nrow=3, ncol=3)
+        self.sample_trained_t_list      = self.Sampler._save_multi_index_image_grid(t_list)         # result of each t
+        self.sample_trained_mask_list      = self.Sampler._save_multi_index_image_grid(t_mask_list)
+        
+        
+    def _save_ema_sample(self, dirs, epoch):
+        dir_sample_save            = dirs.list_dir['ema_sample_img']
+        dir_sample_all_t_save      = dirs.list_dir['ema_sample_all_t_img']
+        
+        self.ema_model.store(self.model.parameters())
+        # model_ema.parameters => model.parameters
+        self.ema_model.copy_to(self.model.parameters())
+        
+        ema_sample, ema_sample_list, ema_t_list, ema_t_mask, ema_next_t_mask, ema_mask_list = self.Sampler.sample(self.model.eval(), self.timesteps_used_epoch)
+        # model_ema.temp => model.parameters
+        self.ema_model.restore(self.model.parameters())
+        
+        file_ema_save                   = 'ema_sample_{:05d}.png'.format(epoch)
+        self.ema_sample_result          = self.Sampler._save_image_grid(ema_sample, dir_sample_save, file_ema_save)
+        if self.args.sampling == 'momentum':
+            self.ema_t_mask                 = self.Sampler._save_image_grid(ema_t_mask)
+            self.ema_next_t_mask            = self.Sampler._save_image_grid(ema_next_t_mask)
+        
+        # file_ema_all_t_save             = 'ema_sample_all_t_{:05d}.png'.format(epoch)
+        # ema_sample_all_t                = torch.cat(ema_sample_all_t, dim=0)
+        # self.ema_sample_trained_t_list  = self.Sampler._save_image_grid(ema_sample_all_t, dir_sample_all_t_save, file_ema_all_t_save)
+        # self.ema_sample_trained_t_list  = util.make_multi_grid(ema_sample_all_t, nrow=3, ncol=3)    
+        self.ema_sample_trained_x_0_list    = self.Sampler._save_multi_index_image_grid(ema_sample_list, option='skip_first')
+        self.ema_sample_trained_t_list      = self.Sampler._save_multi_index_image_grid(ema_t_list)
+        self.ema_sample_trained_mask_list   = self.Sampler._save_multi_index_image_grid(ema_mask_list)
 
-        sample_list = self.Sampler.sample_random_t(img, self.model.eval())
+
+    def _save_train_result_each_t(self, dirs, img, epoch):
+        #=====================================================
+        # degrade the original train image with each t's noise
+        # get the result about each degraded image in t
+        # it's not sampling, it just use one t to get result
+        #=====================================================
+        dir_save    = dirs.list_dir['each_time_result'] 
+        
+        noisy_list, mask_list, sample_list = self.Sampler.result_each_t(img, self.model.eval())
+        
+        noisy_list  = torch.cat(noisy_list, dim=0)
+        mask_list   = torch.cat(mask_list, dim=0)
         sample_list = torch.cat(sample_list, dim=0)
+        
         # sample      = normalize01(sample)
-        file_save   = 'sample_random_t_{:05d}.png'.format(epoch)
+        file_save   = 'each_result_t_{:05d}.png'.format(epoch)
         file_save   = os.path.join(dir_save, file_save)
         
         nrow        = int(np.ceil(np.sqrt(len(sample_list))))
+        noisy_list  = normalize01(noisy_list)
+        mask_list   = normalize01(mask_list)
         sample_list = normalize01(sample_list)
-        grid        = make_grid(sample_list, nrow=nrow, normalize=True)
-        save_image(grid, file_save)
+        
+        noisy_grid  = make_grid(noisy_list, nrow=nrow, normalize=True)
+        mask_grid   = make_grid(mask_list, nrow=nrow, normalize=True)
+        sample_grid = make_grid(sample_list, nrow=nrow, normalize=True)
+        
+        noisy_grid  = noisy_grid.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
+        mask_grid   = mask_grid.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
+        sample_grid = sample_grid.float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy()
+    
+    
+        fig, axarr = plt.subplots(1,3,figsize=(15, 10)) 
+        axarr[0].imshow(X=noisy_grid)
+        axarr[1].imshow(X=mask_grid)
+        axarr[2].imshow(X=sample_grid)
+        
+        axarr[0].set_title("noisy")
+        axarr[1].set_title("output")
+        axarr[2].set_title("prediction")
+        
+        axarr[0].axis("off")
+        axarr[1].axis("off")
+        axarr[2].axis("off")
+        
+        plt.tight_layout()
+        fig.savefig(file_save)
+        plt.close(fig)
+        
+        self.each_train_first_result_t   = util.make_multi_grid([noisy_list, mask_list, sample_list], nrow=1, ncol=3)
+        
+    def _save_sample_all_t(self, dirs, epoch):
+        dir_save    = dirs.list_dir['sample_all_t'] 
+
+        self.sample_all_t, sample_all_t_list = self.Sampler.sample_all_t(self.model.eval())
+        
+        file_save               = 'sample_all_t{:05d}.png'.format(epoch)
+        self.sample_all_t       = self.Sampler._save_image_grid(self.sample_all_t, dir_save, file_save)
+        
+        # sample_all_t_list       = torch.cat(sample_all_t_list, dim=0)
+        # self.sample_all_t_list  = self.Sampler._save_image_grid(sample_all_t_list, None, None)
+        # self.sample_all_t_list  = util.make_multi_grid(sample_all_t_list, nrow=3, ncol=3)
+        self.sample_all_t_list  = self.Sampler._save_multi_index_image_grid(sample_all_t_list)
+        
+        
+    def _save_ema_sample_all_t(self, dirs, epoch):
+        
+        self.ema_model.store(self.model.parameters())
+        # model_ema.parameters => model.parameters
+        self.ema_model.copy_to(self.model.parameters())
+        
+        self.ema_sample_all_t, ema_sample_all_t_list = self.Sampler.sample_all_t(self.model.eval())
+        
+        self.ema_sample_all_t       = self.Sampler._save_image_grid(self.ema_sample_all_t, None, None)
+        
+        # ema_sample_all_t_list       = torch.cat(ema_sample_all_t_list, dim=0)
+        # self.ema_sample_all_t_list  = self.Sampler._save_image_grid(ema_sample_all_t_list, None, None)
+        # self.ema_sample_all_t_list  = util.make_multi_grid(ema_sample_all_t_list, nrow=3, ncol=3)
+        self.ema_sample_all_t_list  = self.Sampler._save_multi_index_image_grid(ema_sample_all_t_list)
+        
+        
+        self.ema_model.restore(self.model.parameters())
         
         
     def _save_model(self, dirs: dict, epoch: int):
