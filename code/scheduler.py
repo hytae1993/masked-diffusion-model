@@ -101,6 +101,11 @@ class Scheduler:
     
     
     def get_timesteps_epoch(self, epoch, epoch_length):
+        """
+        Calculate the timesteps that is used for epoch
+        Used for hierachically increasing timesteps
+        If set scale to 1, use every timesteps at every epochs
+        """
         scale       = self.args.scheduler_num_scale_timesteps
         timeindex   = [i for i in range(1,self.updated_ddpm_num_steps+1)]
 
@@ -142,14 +147,15 @@ class Scheduler:
         return masks
     
     
-    def get_mean_mask(self, black_area_num, img, index=None, mean_value=None):
+    def get_mean_mask(self, black_area_num, img, mean_option=None, index=None):
         """
         Generate masks with mean of selected areas for each channel in the batch.
 
         Parameters:
-        - black_area_num
-        - img
-        - idx
+        - black_area_num: number of pixels to degrade
+        - img: input image
+        - mean_option: how to fill the degraded pixels [mean, value]
+        - idx: (optional)
 
         Returns:
         - noisy_img: Input image in which areas to be removed are filled with their mean value
@@ -185,6 +191,46 @@ class Scheduler:
         mean_masks  = ((1-masks) * mean_pixel) + masks
         
         return noisy_img, mean_masks, black_idx, mean_pixel
+    
+    
+    def degrade_training(self, black_area_num, img, mean_option=None):
+        """
+        Degrade input image with mask for 'training'
+
+        Parameters:
+        - black_area_num: number of pixels to degrade
+        - img: input image
+        - mean_option: how to fill the degraded pixels [mean, value]
+
+        Returns:
+        - noisy_img: Input image in which areas to be removed are filled with some value
+        """
+        masks = torch.ones((len(black_area_num), img.shape[1], self.height, self.width)).to(img.device)
+        
+        black_idx   = []
+        for i in range(len(black_area_num)):
+            num_black_pixels = black_area_num[i].int()
+            
+            black_pixels = random.sample(range(self.height * self.width), num_black_pixels)
+            black_pixels = [(idx // self.width, idx % self.width) for idx in black_pixels]
+
+            for j, k in black_pixels:
+                for l in range(img.shape[1]):
+                    masks[i, l, j, k] = 0.0
+                    
+        if type(mean_option) == float:
+            mean_pixel  = mean_option
+        elif mean_option == 'degraded_area':  # calculate with degraded pixels
+            sum_pixel   = (img * (1-masks)).sum(dim=(1,2,3), keepdim=True)
+            mean_pixel  = sum_pixel / (1-masks).sum(dim=(1,2,3), keepdim=True)
+        elif mean_option == 'non_degraded_area':    # calculate with non-degraded area
+            sum_pixel   = (img * masks).sum(dim=(1,2,3), keepdim=True)
+            mean_pixel  = sum_pixel / masks.sum(dim=(1,2,3), keepdim=True) * -1
+            
+        noisy_img   = ((1-masks) * mean_pixel) + masks * img
+        mean_masks  = ((1-masks) * mean_pixel) + masks
+        
+        return noisy_img, mean_masks
     
     
     def get_schedule_shift_time(self, timesteps: torch.IntTensor) -> torch.FloatTensor:
