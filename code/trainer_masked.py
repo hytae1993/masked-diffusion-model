@@ -92,7 +92,6 @@ class Trainer:
         timesteps           = torch.index_select(torch.tensor(self.timesteps_used_epoch, device=timeindex.device), 0, timeindex)
         
         black_area_num      = self.Scheduler.get_black_area_num_pixels_time(timesteps)      # get number of removed pixels at each timestep 
-        
         self.degraded_img, self.degradation_mask  = self.Scheduler.degrade_training(black_area_num, self.input, mean_option=self.args.mean_option)
         
         # ===================================================================================
@@ -123,7 +122,7 @@ class Trainer:
                     save_path   = os.path.join(dirs.list_dir['checkpoint'], f"checkpoint-{self.global_step}")
                     self.accelerator.save_state(save_path)
         
-        self.mean   = reconstructed_img.mean()
+        self.mean   = self.reconstructed_img.mean()
         
         self.learning_rate  = self.lr_scheduler.get_last_lr()[0]
         self.lr_list.append(self.learning_rate)
@@ -232,9 +231,10 @@ class Trainer:
     def _save_sample(self, dirs, epoch):
         dir_save            = dirs.list_dir['sample_img'] 
 
-        sample, sample_list, t_list, t_mask, next_t_mask, t_mask_list = self.Sampler.sample(self.model.eval(), self.timesteps_used_epoch)
-        file_save                   = 'sample_{:05d}.png'.format(epoch)
-        self.sample_result          = self.Sampler._save_image_grid(sample, dir_save, file_save)
+        # sample, sample_list, t_list, t_mask, next_t_mask, t_mask_list = self.Sampler.sample(self.model.eval(), self.timesteps_used_epoch)
+        sample, t_list, t_mask_list, sample_list  = self.Sampler.sample(self.model.eval(), self.timesteps_used_epoch)
+        file_save                       = 'sample_{:05d}.png'.format(epoch)
+        self.sample_result              = self.Sampler._save_image_grid(sample, dir_save, file_save)
         
         self.sample_trained_x_0_list    = self.Sampler._save_multi_index_image_grid(sample_list, option='skip_first')    # result of x_0 for each t
         self.sample_trained_t_list      = self.Sampler._save_multi_index_image_grid(t_list)         # result of each t
@@ -249,12 +249,13 @@ class Trainer:
         # model_ema.parameters => model.parameters
         self.ema_model.copy_to(self.model.parameters())
         
-        ema_sample, ema_sample_list, ema_t_list, ema_t_mask, ema_next_t_mask, ema_mask_list = self.Sampler.sample(self.model.eval(), self.timesteps_used_epoch)
+        # ema_sample, ema_sample_list, ema_t_list, ema_t_mask, ema_next_t_mask, ema_mask_list = self.Sampler.sample(self.model.eval(), self.timesteps_used_epoch)
+        ema_sample, ema_t_list, ema_mask_list, ema_sample_list  = self.Sampler.sample(self.model.eval(), self.timesteps_used_epoch)
         # model_ema.temp => model.parameters
         self.ema_model.restore(self.model.parameters())
         
-        file_ema_save                   = 'ema_sample_{:05d}.png'.format(epoch)
-        self.ema_sample_result          = self.Sampler._save_image_grid(ema_sample, dir_sample_save, file_ema_save)
+        file_ema_save                       = 'ema_sample_{:05d}.png'.format(epoch)
+        self.ema_sample_result              = self.Sampler._save_image_grid(ema_sample, dir_sample_save, file_ema_save)
         
         self.ema_sample_trained_x_0_list    = self.Sampler._save_multi_index_image_grid(ema_sample_list, option='skip_first')
         self.ema_sample_trained_t_list      = self.Sampler._save_multi_index_image_grid(ema_t_list)

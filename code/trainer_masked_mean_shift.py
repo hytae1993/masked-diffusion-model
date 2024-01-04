@@ -51,7 +51,7 @@ class Trainer:
         
         self.global_step        = 0
         
-        self.visual_names       = ['input','degraded_img', 'degradation_mask', 'shifted_degrade_img', 'shifted_input', 'mask', 'reconstructed_img', \
+        self.visual_names       = ['input','degraded_img', 'degradation_mask', 'shifted_degrade_img', 'shifted_input', 'mask', 'reconstructed_img', 'inverse_shifted_reconstrucion', \
                                     'sample_result', 'sample_trained_x_0_list', 'sample_trained_t_list', 'sample_trained_mask_list', \
                                     'ema_sample_result', 'ema_sample_trained_x_0_list', 'ema_sample_trained_t_list', 'ema_sample_trained_mask_list']
         
@@ -134,8 +134,8 @@ class Trainer:
         # ===================================================================================
         # inverse shift 
         # ===================================================================================
-        inverse_shifted_reconstrucion  = self.Scheduler.perturb_shift_inverse(reconstructed_img, shift)
-        self.mean   = inverse_shifted_reconstrucion.mean()
+        self.inverse_shifted_reconstrucion  = self.Scheduler.perturb_shift_inverse(self.reconstructed_img, shift)
+        self.mean   = self.inverse_shifted_reconstrucion.mean()
         
         self.learning_rate  = self.lr_scheduler.get_last_lr()[0]
         self.lr_list.append(self.learning_rate)
@@ -197,6 +197,7 @@ class Trainer:
             elapsed_time = end - start
             
             if self.accelerator.is_main_process:
+                
                 loss_mean       = statistics.mean(loss)
                 loss_std        = statistics.stdev(loss, loss_mean)
                 self.reconstruct_loss   = loss_mean
@@ -244,9 +245,10 @@ class Trainer:
     def _save_sample(self, dirs, epoch):
         dir_save            = dirs.list_dir['sample_img'] 
 
-        sample, sample_list, t_list, t_mask, next_t_mask, t_mask_list = self.Sampler.sample(self.model.eval(), self.timesteps_used_epoch)
-        file_save                   = 'sample_{:05d}.png'.format(epoch)
-        self.sample_result          = self.Sampler._save_image_grid(sample, dir_save, file_save)
+        # sample, sample_list, t_list, t_mask, next_t_mask, t_mask_list = self.Sampler.sample(self.model.eval(), self.timesteps_used_epoch)
+        sample, t_list, t_mask_list, sample_list  = self.Sampler.sample(self.model.eval(), self.timesteps_used_epoch)
+        file_save                       = 'sample_{:05d}.png'.format(epoch)
+        self.sample_result              = self.Sampler._save_image_grid(sample, dir_save, file_save)
         
         self.sample_trained_x_0_list    = self.Sampler._save_multi_index_image_grid(sample_list, option='skip_first')    # result of x_0 for each t
         self.sample_trained_t_list      = self.Sampler._save_multi_index_image_grid(t_list)         # result of each t
@@ -261,12 +263,13 @@ class Trainer:
         # model_ema.parameters => model.parameters
         self.ema_model.copy_to(self.model.parameters())
         
-        ema_sample, ema_sample_list, ema_t_list, ema_t_mask, ema_next_t_mask, ema_mask_list = self.Sampler.sample(self.model.eval(), self.timesteps_used_epoch)
+        # ema_sample, ema_sample_list, ema_t_list, ema_t_mask, ema_next_t_mask, ema_mask_list = self.Sampler.sample(self.model.eval(), self.timesteps_used_epoch)
+        ema_sample, ema_t_list, ema_mask_list, ema_sample_list  = self.Sampler.sample(self.model.eval(), self.timesteps_used_epoch)
         # model_ema.temp => model.parameters
         self.ema_model.restore(self.model.parameters())
         
-        file_ema_save                   = 'ema_sample_{:05d}.png'.format(epoch)
-        self.ema_sample_result          = self.Sampler._save_image_grid(ema_sample, dir_sample_save, file_ema_save)
+        file_ema_save                       = 'ema_sample_{:05d}.png'.format(epoch)
+        self.ema_sample_result              = self.Sampler._save_image_grid(ema_sample, dir_sample_save, file_ema_save)
         
         self.ema_sample_trained_x_0_list    = self.Sampler._save_multi_index_image_grid(ema_sample_list, option='skip_first')
         self.ema_sample_trained_t_list      = self.Sampler._save_multi_index_image_grid(ema_t_list)

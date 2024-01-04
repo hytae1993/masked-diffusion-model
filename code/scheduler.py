@@ -63,7 +63,11 @@ class Scheduler:
     
     def get_black_area_num_pixels_time(self, time):
         
-        time    = (time-1).int()
+        try:
+            time    = (time-1).int()
+        except AttributeError:
+            time    = time - 1
+            
         black_area_num_pixles_time = torch.index_select(torch.tensor(self.black_area_pixels, device=time.device), 0, time)
     
         return black_area_num_pixles_time
@@ -218,14 +222,15 @@ class Scheduler:
                 for l in range(img.shape[1]):
                     masks[i, l, j, k] = 0.0
                     
-        if type(mean_option) == float:
-            mean_pixel  = mean_option
-        elif mean_option == 'degraded_area':  # calculate with degraded pixels
-            sum_pixel   = (img * (1-masks)).sum(dim=(1,2,3), keepdim=True)
-            mean_pixel  = sum_pixel / (1-masks).sum(dim=(1,2,3), keepdim=True)
-        elif mean_option == 'non_degraded_area':    # calculate with non-degraded area
-            sum_pixel   = (img * masks).sum(dim=(1,2,3), keepdim=True)
-            mean_pixel  = sum_pixel / masks.sum(dim=(1,2,3), keepdim=True) * -1
+        try:
+            mean_pixel = float(mean_option)
+        except ValueError:
+            if mean_option == 'degraded_area':  # calculate with degraded pixels
+                sum_pixel   = (img * (1-masks)).sum(dim=(1,2,3), keepdim=True)
+                mean_pixel  = sum_pixel / (1-masks).sum(dim=(1,2,3), keepdim=True)
+            elif mean_option == 'non_degraded_area':    # calculate with non-degraded area
+                sum_pixel   = (img * masks).sum(dim=(1,2,3), keepdim=True)
+                mean_pixel  = sum_pixel / masks.sum(dim=(1,2,3), keepdim=True) * -1
             
         noisy_img   = ((1-masks) * mean_pixel) + masks * img
         mean_masks  = ((1-masks) * mean_pixel) + masks
