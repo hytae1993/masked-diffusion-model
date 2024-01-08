@@ -281,7 +281,7 @@ if __name__ == '__main__':
     parser.add_argument('--dir_dataset', help='path to the original dataset', type=str, default='/nas2/dataset')
     parser.add_argument('--data_name', help='name of the dataset', type=str, default='mnist')
     parser.add_argument('--data_set', help='name of the subset of the dataset', type=str, default='train')
-    parser.add_argument('--data_size', help='size of the data', type=int, default=64)
+    parser.add_argument('--data_size', help='size of the data', type=int, default=32)
     parser.add_argument('--date', help='date of the program execution', type=str, default='')
     parser.add_argument('--time', help='time of the program execution', type=str, default='')
     parser.add_argument('--title', help='title of experiment', type=str, default='')

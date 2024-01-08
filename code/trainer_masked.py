@@ -75,14 +75,15 @@ class Trainer:
         # time
         if 'huggingface' in self.args.dir_dataset:
             try:
-                input     = input["image"]
+                self.input   = input["image"]
                 self.label   = input["label"]
             except KeyError:
-                input     = input["image"]
+                self.input   = input["image"]
         else:
             self.input     = input[0]
 
         self.input      = self.input.to(self.args.weight_dtype)
+        self.input      = self._shift_mean(self.input)         # make each mean of image to zero
         
         # ===================================================================================
         # Create masks with random area black and obtation degraded image
@@ -182,7 +183,6 @@ class Trainer:
             
             end = timer()
             elapsed_time = end - start
-            
             if self.accelerator.is_main_process:
                 loss_mean       = statistics.mean(loss)
                 loss_std        = statistics.stdev(loss, loss_mean)

@@ -60,6 +60,7 @@ def get_dataloader(dataset: Dataset, batch_size: int, num_workers: int):
         batch_size=batch_size,
         drop_last=True,
         shuffle=True, 
+        # pin_memory=True,
         num_workers=num_workers,  # not working for CPU
         )
     return dataloader
@@ -365,6 +366,7 @@ if __name__ == '__main__':
     parser.add_argument("--ddpm_schedule", type=str, default="linear")
     parser.add_argument('--scheduler_num_scale_timesteps', type=int, default=1, help='1/2^n, 1/2^{n-1}, ..., 1/2^0 -> 1 use every timesteps')
     parser.add_argument("--sampling", type=str, default="base")
+    parser.add_argument("--sampling_mask_dependency", help='dependcy of degradation mask between t', type=str, default="independent", choices=['dependent', 'independent'])
     parser.add_argument('--mean_option', default=0)
     parser.add_argument('--mean_value_accumulate', type=eval, default=False, choices=[True, False])
     # ======================================================================

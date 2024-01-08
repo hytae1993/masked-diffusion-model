@@ -162,53 +162,63 @@ class Sampler:
     
     def _sample_momentum(self, model: Module, timesteps_used_epoch):
         latent      = self._get_latent_initial(model)
-        sample_0    = latent.to(model.device)
-        sample_list = sample_0.unsqueeze(dim=1).cpu()
-        t_list      = sample_0.unsqueeze(dim=1).cpu()
-        t_mask_list = sample_0.unsqueeze(dim=1).cpu()
+        sample_t    = latent.to(model.device)
+        sample_list = sample_t.unsqueeze(dim=1).cpu()
+        t_list      = sample_t.unsqueeze(dim=1).cpu()
+        t_mask_list = sample_t.unsqueeze(dim=1).cpu()
         
         with torch.no_grad():
             sample_progress_bar = tqdm(total=len(timesteps_used_epoch), leave=False)
             sample_progress_bar.set_description(f"Sampling")
             
+            if self.args.sampling_mask_dependency == 'independent':
+                index_list  = None
+            elif self.args.sampling_mask_dependency == 'dependent':
+                # index_list  = torch.randperm(len(timesteps_used_epoch), dtype=torch.int64)
+                index_list = torch.stack([torch.randperm(self.args.data_size * self.args.data_size) for _ in range(self.args.sample_num)])
+                
+            index_start = 0
             for i in range(len(timesteps_used_epoch)-1, -1, -1):
                 t       = timesteps_used_epoch[i]
                 time    = torch.Tensor([t])
                 time    = time.expand(self.args.sample_num).to(model.device)
                 
-                sample  = sample_0
+                mask            = model(sample_t, time).sample
+                sample_0        = sample_t + mask # x`_0
                 
-                mask            = model(sample, time).sample
-                reconstruction  = sample + mask # x`_0
-                
-                sample_list     = torch.cat((sample_list, reconstruction.unsqueeze(dim=1).cpu()), dim=1)
-                
+                sample_list     = torch.cat((sample_list, sample_0.unsqueeze(dim=1).cpu()), dim=1)
                 if i > 0:
                     next_t                      = time - 1
                     black_area_num_t            = self.Scheduler.get_black_area_num_pixels_time(time)
                     black_area_num_next_t       = self.Scheduler.get_black_area_num_pixels_time(next_t)
                     black_area_num_difference   = black_area_num_t - black_area_num_next_t
                     
-                    degraded_difference, difference_mask    = self.Scheduler.degrade_training(black_area_num_difference, reconstruction, mean_option=self.args.mean_option)
+                    if self.args.sampling_mask_dependency == 'independent':
+                        degraded_difference, difference_mask    = self.Scheduler.degrade_independent_sampling(black_area_num_difference, sample_0, mean_option=self.args.mean_option)
+                    elif self.args.sampling_mask_dependency == 'dependent':
+                        index_using = index_list[:, index_start:index_start+black_area_num_difference[0]]
+                        index_start = index_start + black_area_num_difference[0]
+                        degraded_difference, difference_mask    = self.Scheduler.degrade_dependent_sampling(sample_0, mean_option=self.args.mean_option, index=index_using)
+                    
+                    difference_mask = difference_mask.expand_as(sample_0)
                     t_mask_list  = torch.cat((t_mask_list, difference_mask.unsqueeze(dim=1).cpu()), dim=1)
                     
-                    sample_0    = sample_0 + degraded_difference
-                    t_list      = torch.cat((t_list, sample_0.unsqueeze(dim=1).cpu()), dim=1)
+                    # sample_t            = sample_t - degraded_t + degraded_next_t
+                    sample_t    = sample_t + degraded_difference
+                    t_list      = torch.cat((t_list, sample_t.unsqueeze(dim=1).cpu()), dim=1)
                     
-                else:
-                    sample  = reconstruction
                 sample_progress_bar.update(1)
         sample_progress_bar.close()
         
-        return sample, t_list, t_mask_list, sample_list
+        return sample_0, t_list, t_mask_list, sample_list
     
     # def _sample_momentum(self, model: Module, timesteps_used_epoch):
     #     # x_(t-1)   = x_t - D(x`_0, t) + D(x`_0, t-1)
     #     latent      = self._get_latent_initial(model)   # T0 
-    #     sample_0    = latent.to(model.device)
-    #     sample_list = sample_0.unsqueeze(dim=1).cpu()
-    #     t_list      = sample_0.unsqueeze(dim=1).cpu()
-    #     t_mask_list = sample_0.unsqueeze(dim=1).cpu()
+    #     sample_t    = latent.to(model.device)
+    #     sample_list = sample_t.unsqueeze(dim=1).cpu()
+    #     t_list      = sample_t.unsqueeze(dim=1).cpu()
+    #     t_mask_list = sample_t.unsqueeze(dim=1).cpu()
         
     #     black_idx_t = None
         
@@ -221,12 +231,10 @@ class Sampler:
     #             time            = torch.Tensor([t])
     #             time            = time.expand(self.args.sample_num).to(model.device)
                 
-    #             sample          = sample_0
+    #             mask            = model(sample_t, time).sample
+    #             sample_0        = sample_t + mask     # x_0
                 
-    #             mask            = model(sample, time).sample
-    #             reconstruction  = sample + mask     # x_0
-                
-    #             sample_list     = torch.cat((sample_list, reconstruction.unsqueeze(dim=1).cpu()), dim=1)
+    #             sample_list     = torch.cat((sample_list, sample_0.unsqueeze(dim=1).cpu()), dim=1)
                 
     #             if i > 0:
     #                 next_t          = timesteps_used_epoch[i-1]
@@ -234,78 +242,85 @@ class Sampler:
     #                 next_time       = next_time.expand(self.args.sample_num).to(model.device)
                         
     #                 black_area_num_t                            = self.Scheduler.get_black_area_num_pixels_time(time)
-    #                 degraded_t,t_mask,black_idx_t, black_mean   = self.Scheduler.get_mean_mask(black_area_num_t, reconstruction, index=black_idx_t) # D(x`_0, t)
+    #                 degraded_t,t_mask,black_idx_t, black_mean   = self.Scheduler.get_mean_mask(black_area_num_t, sample_0, index=black_idx_t) # D(x`_0, t)
     #                 black_area_num_next_t                       = self.Scheduler.get_black_area_num_pixels_time(next_time)
                     
     #                 t_mask_list  = torch.cat((t_mask_list, t_mask.unsqueeze(dim=1).cpu()), dim=1)
                     
     #                 if self.args.mean_value_accumulate:
     #                     # degraded_next_t,next_t_mask,_,_               = self.Scheduler.get_mean_mask(black_area_num_next_t, reconstruction, index=black_idx_t, mean_value=black_mean) # D(x`_0, t-1)
-    #                     degraded_next_t,next_t_mask,black_idx_t,_               = self.Scheduler.get_mean_mask(black_area_num_next_t, reconstruction, index=black_idx_t, mean_value=black_mean) # D(x`_0, t-1)
+    #                     degraded_next_t,next_t_mask,black_idx_t,_               = self.Scheduler.get_mean_mask(black_area_num_next_t, sample_0, index=black_idx_t, mean_value=black_mean) # D(x`_0, t-1)
     #                 else:
     #                     # degraded_next_t,next_t_mask,_,_               = self.Scheduler.get_mean_mask(black_area_num_next_t, reconstruction, index=black_idx_t) # D(x`_0, t-1)
-    #                     degraded_next_t,next_t_mask,black_idx_t,_               = self.Scheduler.get_mean_mask(black_area_num_next_t, reconstruction, index=black_idx_t) # D(x`_0, t-1)
+    #                     degraded_next_t,next_t_mask,black_idx_t,_               = self.Scheduler.get_mean_mask(black_area_num_next_t, sample_0, index=black_idx_t) # D(x`_0, t-1)
                     
-    #                 sample_0            = sample_0 - degraded_t + degraded_next_t
+    #                 sample_t            = sample_t - degraded_t + degraded_next_t
     #                 # sample_0            = sample_0 + reconstruction(next_t_mask - t_mask)
     #                 t_list              = torch.cat((t_list, sample_0.unsqueeze(dim=1).cpu()), dim=1)
                     
-    #             else:
-    #                 sample  = reconstruction
-    #                 # t_list  = torch.cat((t_list, sample.unsqueeze(dim=1)), dim=1)
                     
     #             sample_progress_bar.update(1)
     #         sample_progress_bar.close()
             
-    #         return sample, sample_list, t_list, t_mask, next_t_mask, t_mask_list
-        
-        
+    #         return sample_0, t_list, t_mask_list, sample_list
+    
+    
     def _sample_mean_shift_momentum(self, model: Module, timesteps_used_epoch):
         latent      = self._get_latent_initial(model)
-        sample_0    = latent.to(model.device)
-        sample_list = sample_0.unsqueeze(dim=1).cpu()
-        t_list      = sample_0.unsqueeze(dim=1).cpu()
-        t_mask_list = sample_0.unsqueeze(dim=1).cpu()
+        sample_t    = latent.to(model.device)
+        sample_list = sample_t.unsqueeze(dim=1).cpu()
+        t_list      = sample_t.unsqueeze(dim=1).cpu()
+        t_mask_list = sample_t.unsqueeze(dim=1).cpu()
         
         with torch.no_grad():
             sample_progress_bar = tqdm(total=len(timesteps_used_epoch), leave=False)
             sample_progress_bar.set_description(f"Sampling")
             
+            if self.args.sampling_mask_dependency == 'independent':
+                index_list  = None
+            elif self.args.sampling_mask_dependency == 'dependent':
+                # index_list  = torch.randperm(len(timesteps_used_epoch), dtype=torch.int64)
+                index_list = torch.stack([torch.randperm(self.args.data_size * self.args.data_size) for _ in range(self.args.sample_num)])
+                
+            index_start = 0
             for i in range(len(timesteps_used_epoch)-1, -1, -1):
                 t       = timesteps_used_epoch[i]
                 time    = torch.Tensor([t])
                 time    = time.expand(self.args.sample_num).to(model.device)
                 
-                shift   = self.Scheduler.get_schedule_shift_time(time)
-                sample  = self.Scheduler.perturb_shift(sample_0, shift)
+                shift           = self.Scheduler.get_schedule_shift_time(time)
+                sample_t_shift  = self.Scheduler.perturb_shift(sample_t, shift)
                 
-                mask            = model(sample, time).sample
-                reconstruction  = sample + mask
-                reconstruction  = self.Scheduler.perturb_shift_inverse(reconstruction, shift)   # x`_0
+                mask            = model(sample_t_shift, time).sample
+                sample_0        = sample_t_shift + mask # x`_0
+                sample_0        = self.Scheduler.perturb_shift_inverse(sample_0, shift)   # x`_0
                 
-                sample_list     = torch.cat((sample_list, reconstruction.unsqueeze(dim=1).cpu()), dim=1)
-                
+                sample_list     = torch.cat((sample_list, sample_0.unsqueeze(dim=1).cpu()), dim=1)
                 if i > 0:
                     next_t                      = time - 1
                     black_area_num_t            = self.Scheduler.get_black_area_num_pixels_time(time)
                     black_area_num_next_t       = self.Scheduler.get_black_area_num_pixels_time(next_t)
                     black_area_num_difference   = black_area_num_t - black_area_num_next_t
                     
-                    degraded_difference, difference_mask    = self.Scheduler.degrade_training(black_area_num_difference, reconstruction, mean_option=self.args.mean_option)
+                    if self.args.sampling_mask_dependency == 'independent':
+                        degraded_difference, difference_mask    = self.Scheduler.degrade_independent_sampling(black_area_num_difference, sample_0, mean_option=self.args.mean_option)
+                    elif self.args.sampling_mask_dependency == 'dependent':
+                        index_using = index_list[:, index_start:index_start+black_area_num_difference[0]]
+                        index_start = index_start + black_area_num_difference[0]
+                        degraded_difference, difference_mask    = self.Scheduler.degrade_dependent_sampling(sample_0, mean_option=self.args.mean_option, index=index_using)
+                    
                     t_mask_list  = torch.cat((t_mask_list, difference_mask.unsqueeze(dim=1).cpu()), dim=1)
                     
-                    sample_0    = sample_0 + degraded_difference
-                    t_list      = torch.cat((t_list, sample_0.unsqueeze(dim=1).cpu()), dim=1)
-                    
-                else:
-                    sample  = reconstruction
+                    # sample_t            = sample_t - degraded_t + degraded_next_t
+                    sample_t    = sample_t + degraded_difference
+                    t_list      = torch.cat((t_list, sample_t.unsqueeze(dim=1).cpu()), dim=1)
                     
                 sample_progress_bar.update(1)
         sample_progress_bar.close()
         
-        return sample, t_list, t_mask_list, sample_list
-    
-    
+        return sample_0, t_list, t_mask_list, sample_list
+        
+        
     # def _sample_mean_shift_momentum(self, model: Module, timesteps_used_epoch):
     #     # x_(t-1)   = x_t - D(x`_0, t) + D(x`_0, t-1)
     #     latent      = self._get_latent_initial(model)   # T0 
