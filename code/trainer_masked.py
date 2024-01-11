@@ -55,7 +55,9 @@ class Trainer:
                                     'sample_result', 'sample_trained_x_0_list', 'sample_trained_t_list', 'sample_trained_mask_list', \
                                     'ema_sample_result', 'ema_sample_trained_x_0_list', 'ema_sample_trained_t_list', 'ema_sample_trained_mask_list']
         
-        self.loss_names         = ['reconstruct_loss', 'learning_rate', 'mean']
+        self.loss_names         = ['reconstruct_loss', 'learning_rate', 'reconstruct_train_mean', 'degraded_train_mean']
+        
+        self.mean_names         = ['sample_mean', 'sample_t_mean', 'sample_0_mean', 'ema_sample_mean', 'ema_sample_t_mean', 'ema_sample_0_mean']
         
         self.timesteps_used_epoch   = None
         
@@ -123,7 +125,8 @@ class Trainer:
                     save_path   = os.path.join(dirs.list_dir['checkpoint'], f"checkpoint-{self.global_step}")
                     self.accelerator.save_state(save_path)
         
-        self.mean   = self.reconstructed_img.mean()
+        self.reconstruct_train_mean   = self.reconstructed_img.mean()
+        self.degraded_train_mean      = self.degraded_img.mean()
         
         self.learning_rate  = self.lr_scheduler.get_last_lr()[0]
         self.lr_list.append(self.learning_rate)
@@ -133,12 +136,13 @@ class Trainer:
             losses = self.get_current_losses()
             visualizer.plot_current_losses(epoch, losses)
         
-        return self.reconstruct_loss.item(), self.mean.item()
+        return self.reconstruct_loss.item(), self.reconstruct_train_mean.item(), self.degraded_train_mean.item()
 
 
     def _run_epoch(self, epoch: int, epoch_length: int, resume_step: int, dirs: dict, visualizer):
-        loss_batch              = []
-        mean_batch              = []
+        loss_batch                      = []
+        reconstruct_train_mean_batch    = []
+        degraded_train_mean_batch       = []
         
         batch_progress_bar   = tqdm(total=len(self.dataloader), disable=not self.accelerator.is_local_main_process, leave=False)
         batch_progress_bar.set_description(f"Batch ")
@@ -147,16 +151,17 @@ class Trainer:
         
         for i, input in enumerate(self.dataloader, 0):
             # time
-            loss, mean = self._run_batch(i, input, epoch, epoch_length, resume_step, dirs, visualizer)
+            loss, reconstruct_train_mean,  degraded_train_mean= self._run_batch(i, input, epoch, epoch_length, resume_step, dirs, visualizer)
             batch_progress_bar.update(1)
             
             if self.accelerator.is_main_process: 
                 
                 loss_batch.append(loss)
-                mean_batch.append(mean)
+                reconstruct_train_mean_batch.append(reconstruct_train_mean)
+                degraded_train_mean_batch.append(degraded_train_mean)
                 
         batch_progress_bar.close()
-        return loss_batch, mean_batch
+        return loss_batch, reconstruct_train_mean_batch, degraded_train_mean_batch
     
     
     def train(self, epoch_start: int, epoch_length: int, resume_step: int, global_step: int, dirs: dict, visualizer):
@@ -179,31 +184,33 @@ class Trainer:
             if self.accelerator.is_main_process and visualizer is not None:
                 visualizer.reset()
             # self.dataloader.batch_sampler.batch_sampler.sampler.set_epoch(epoch)
-            loss, mean = self._run_epoch(epoch, epoch_length, resume_step, dirs, visualizer)
+            loss, reconstruct_train_mean,  degraded_train_mean= self._run_epoch(epoch, epoch_length, resume_step, dirs, visualizer)
             
             end = timer()
             elapsed_time = end - start
             if self.accelerator.is_main_process:
                 loss_mean       = statistics.mean(loss)
                 loss_std        = statistics.stdev(loss, loss_mean)
-                self.reconstruct_loss   = loss_mean
+                reconstruct_loss    = loss_mean
                 
-                mean_mean       = statistics.mean(mean)
-                self.mean       = mean_mean
+                reconstruct_train_mean = statistics.mean(reconstruct_train_mean)
+                degraded_train_mean    = statistics.mean(degraded_train_mean)
 
-                loss_mean_epoch.append(loss_mean)
-                loss_std_epoch.append(loss_std)
+                # loss_mean_epoch.append(loss_mean)
+                # loss_std_epoch.append(loss_std)
                 
                 if epoch > 0 and epoch % self.args.save_images_epochs == 0 or epoch == (epoch_start+epoch_length-1) or (epoch+1) % (epoch_length / self.args.scheduler_num_scale_timesteps) == 0:
                 # if epoch == epoch_start or epoch % self.args.save_images_epochs == 0 or epoch == (epoch_start+epoch_length-1) or (epoch+1) % (epoch_length / self.args.scheduler_num_scale_timesteps) == 0:
     
-                    self._save_model(dirs, epoch)
+                    # self._save_model(dirs, epoch)
                     self._save_sample(dirs, epoch)
                     if self.args.use_ema:
                         self._save_ema_sample(dirs, epoch)
                     # save to wandb
                     if visualizer is not None:
                         visualizer.display_current_results(self.get_current_visuals(), epoch)
+                        means = self.get_current_mean()
+                        visualizer.plot_current_losses(epoch, means)
             
             epoch_progress_bar.update(1)
         
@@ -227,6 +234,12 @@ class Trainer:
                 errors_ret[name] = float(getattr(self, name))  # float(...) works for both scalar tensor and float number
         return errors_ret
     
+    def get_current_mean(self):
+        errors_ret = OrderedDict()
+        for name in self.mean_names:
+            if isinstance(name, str):
+                errors_ret[name] = float(getattr(self, name))  # float(...) works for both scalar tensor and float number
+        return errors_ret
  
     def _save_sample(self, dirs, epoch):
         dir_save            = dirs.list_dir['sample_img'] 
@@ -236,14 +249,18 @@ class Trainer:
         file_save                       = 'sample_{:05d}.png'.format(epoch)
         self.sample_result              = self.Sampler._save_image_grid(sample, dir_save, file_save)
         
-        self.sample_trained_x_0_list    = self.Sampler._save_multi_index_image_grid(sample_list, option='skip_first')    # result of x_0 for each t
-        self.sample_trained_t_list      = self.Sampler._save_multi_index_image_grid(t_list)         # result of each t
-        self.sample_trained_mask_list   = self.Sampler._save_multi_index_image_grid(t_mask_list)
+        self.sample_mean    = sample.mean()
+        self.sample_t_mean  = t_list.mean()
+        self.sample_0_mean  = sample_list.mean()
+        
+        nrow = int(np.ceil(np.sqrt(sample_list.shape[1])))
+        self.sample_trained_x_0_list    = self.Sampler._save_multi_index_image_grid(sample_list, nrow=nrow, option='skip_first')    # result of x_0 for each t
+        self.sample_trained_t_list      = self.Sampler._save_multi_index_image_grid(t_list, nrow=nrow)         # result of each t
+        self.sample_trained_mask_list   = self.Sampler._save_multi_index_image_grid(t_mask_list, nrow=nrow)
         
         
     def _save_ema_sample(self, dirs, epoch):
         dir_sample_save            = dirs.list_dir['ema_sample_img']
-        dir_sample_all_t_save      = dirs.list_dir['ema_sample_all_t_img']
         
         self.ema_model.store(self.model.parameters())
         # model_ema.parameters => model.parameters
@@ -254,12 +271,17 @@ class Trainer:
         # model_ema.temp => model.parameters
         self.ema_model.restore(self.model.parameters())
         
+        self.ema_sample_mean    = ema_sample.mean()
+        self.ema_sample_t_mean  = ema_t_list.mean()
+        self.ema_sample_0_mean  = ema_sample_list.mean()
+        
         file_ema_save                       = 'ema_sample_{:05d}.png'.format(epoch)
         self.ema_sample_result              = self.Sampler._save_image_grid(ema_sample, dir_sample_save, file_ema_save)
         
-        self.ema_sample_trained_x_0_list    = self.Sampler._save_multi_index_image_grid(ema_sample_list, option='skip_first')
-        self.ema_sample_trained_t_list      = self.Sampler._save_multi_index_image_grid(ema_t_list)
-        self.ema_sample_trained_mask_list   = self.Sampler._save_multi_index_image_grid(ema_mask_list)
+        nrow = int(np.ceil(np.sqrt(ema_sample_list.shape[1])))
+        self.ema_sample_trained_x_0_list    = self.Sampler._save_multi_index_image_grid(ema_sample_list, nrow=nrow, option='skip_first')
+        self.ema_sample_trained_t_list      = self.Sampler._save_multi_index_image_grid(ema_t_list, nrow=nrow)
+        self.ema_sample_trained_mask_list   = self.Sampler._save_multi_index_image_grid(ema_mask_list, nrow=nrow)
 
 
     def _save_model(self, dirs: dict, epoch: int):

@@ -80,7 +80,8 @@ class Scheduler:
         # Generate linear scale indices
         max_index       = len(time_list) - 1
         # linear_indices  = [int(i / self.image_size) for i in range(1, n+1)]
-        linear_indices  = [int(self.image_size/n) * i for i in range(1, n+1)]
+        linear_indices  = [int(self.image_size/n) * i for i in range(1, n+1)]  
+        # change to linspace
         
         unique_linear_indices = list(set(linear_indices))
         
@@ -209,7 +210,7 @@ class Scheduler:
         Returns:
         - noisy_img: Input image in which areas to be removed are filled with some value
         """
-        masks = torch.ones((len(black_area_num), img.shape[1], self.height, self.width)).to(img.device)
+        masks = torch.ones((len(black_area_num), 1, self.height, self.width)).to(img.device)
         
         for i in range(len(black_area_num)):
             num_black_pixels = black_area_num[i].int()
@@ -218,30 +219,36 @@ class Scheduler:
             black_pixels = [(idx // self.width, idx % self.width) for idx in black_pixels]
 
             for j, k in black_pixels:
-                for l in range(img.shape[1]):
-                    masks[i, l, j, k] = 0.0
+                masks[i, 0, j, k] = 0.0
+                # for l in range(img.shape[1]):
+                #     masks[i, l, j, k] = 0.0
                     
         try:
             mean_pixel = float(mean_option)
         except ValueError:
             if mean_option == 'degraded_area':  # calculate with degraded pixels
-                sum_pixel   = (img * (1-masks)).sum(dim=(1,2,3), keepdim=True)
-                mean_pixel  = sum_pixel / (1-masks).sum(dim=(1,2,3), keepdim=True)
+                # sum_pixel   = (img * (1-masks)).sum(dim=(1,2,3), keepdim=True)
+                # mean_pixel  = sum_pixel / (1-masks).sum(dim=(1,2,3), keepdim=True)
+                pass
+                
             elif mean_option == 'non_degraded_area':    # calculate with non-degraded area
                 sum_pixel   = (img * masks).sum(dim=(1,2,3), keepdim=True)
-                mean_pixel  = sum_pixel / masks.sum(dim=(1,2,3), keepdim=True) * -1
+                mean_pixel  = sum_pixel / (1-masks).sum(dim=(1,2,3), keepdim=True) / img.shape[1] * -1
                 mean_pixel[torch.isnan(mean_pixel)] = 0.0
+                
             elif mean_option == 'difference':   # fill same as 'degraded_area'
-                sum_pixel   = (img * (1-masks)).sum(dim=(1,2,3), keepdim=True)
-                mean_pixel  = sum_pixel / (1-masks).sum(dim=(1,2,3), keepdim=True)
+                # sum_pixel   = (img * (1-masks)).sum(dim=(1,2,3), keepdim=True)
+                # mean_pixel  = sum_pixel / (1-masks).sum(dim=(1,2,3), keepdim=True)
+                pass
 
+        
         noisy_img   = ((1-masks) * mean_pixel) + masks * img
         mean_masks  = ((1-masks) * mean_pixel) + masks
         
         return noisy_img, mean_masks
     
     
-    def degrade_dependent_sampling(self, img, mean_option=None, index=None):
+    def degrade_dependent_sampling(self, sample_t, sample_0, mean_option, index_start, index_end, index_list):
         """
         Degrade input image with single mask or multi masks for 'sampling'.
         Single mask is used for difference of two masks.
@@ -252,28 +259,108 @@ class Scheduler:
         Returns:
         
         """
-        masks   = torch.zeros(self.args.sample_num, self.height*self.width).to(img.device)
-        for i in range(self.args.sample_num):
-            masks[i, index[i]]  = 1.0
-        masks   = masks.view(self.args.sample_num, 1, self.height, self.width)
+        masks_t   = torch.zeros(self.args.sample_num, self.height*self.width).to(sample_t.device)
+        masks_0   = torch.zeros(self.args.sample_num, self.height*self.width).to(sample_0.device)
+        mask      = torch.zeros(self.args.sample_num, self.height*self.width).to(sample_0.device)
+        
+        index_used          = index_list[:, :index_start]
+        index_using         = index_list[:, index_start:index_end]
+        index_total_used    = index_list[:, :index_end]
+        
+        masks_t.scatter_(1, index_used, 1)
+        masks_0.scatter_(1, index_using, 1)
+        mask.scatter_(1, index_total_used, 1)
+        
+        masks_t = masks_t.view(self.args.sample_num, -1, self.height, self.width)
+        masks_0 = masks_0.view(self.args.sample_num, -1, self.height, self.width)
+        mask    = mask.view(self.args.sample_num, -1, self.height, self.width)
+        
+        pixels_t    = sample_t * masks_t
+        pixels_0    = sample_0 * masks_0
+        preserved   = pixels_t + pixels_0
         
         try:
             mean_pixel = float(mean_option)
         except ValueError:
             if mean_option == 'degraded_area':  # calculate with degraded pixels
-                sum_pixel   = (img * (1-masks)).sum(dim=(1,2,3), keepdim=True)
-                mean_pixel  = sum_pixel / (1-masks).sum(dim=(1,2,3), keepdim=True)
+                # sum_pixel   = (img * (1-masks)).sum(dim=(1,2,3), keepdim=True)
+                # mean_pixel  = sum_pixel / (1-masks).sum(dim=(1,2,3), keepdim=True)
+                pass
             elif mean_option == 'non_degraded_area':    # calculate with non-degraded area
-                sum_pixel   = (img * masks).sum(dim=(1,2,3), keepdim=True)
-                mean_pixel  = sum_pixel / masks.sum(dim=(1,2,3), keepdim=True) * -1
+                sum_pixel   = (preserved * mask).sum(dim=(1,2,3), keepdim=True)
+                mean_pixel  = sum_pixel / (1-mask).sum(dim=(1,2,3), keepdim=True) / sample_t.shape[1] * -1
                 mean_pixel[torch.isnan(mean_pixel)] = 0.0
             elif mean_option == 'difference':
                 pass
             
-        noisy_img   = ((1-masks) * mean_pixel) + masks * img
-        mean_masks  = ((1-masks) * mean_pixel) + masks
+        noisy_img   = ((1-mask) * mean_pixel) + preserved
+        mean_masks  = ((1-mask) * mean_pixel)
+        
+        # a = np.array(noisy_img[0,0,:,:].view(1*self.height*self.width, 1).cpu())
+        # b = np.array(((1-mask) * mean_pixel)[0,0,:,:].view(1*self.height*self.width, 1).cpu())
+        # c = np.array(preserved[0,0,:,:].view(1*self.height*self.width, 1).cpu())
+        
+        # a1 = np.array(noisy_img[0,1,:,:].view(1*self.height*self.width, 1).cpu())
+        # b1 = np.array(((1-mask) * mean_pixel)[0,0,:,:].view(1*self.height*self.width, 1).cpu())
+        # c1 = np.array(preserved[0,1,:,:].view(1*self.height*self.width, 1).cpu())
+        
+        # a2 = np.array(noisy_img[0,2,:,:].view(1*self.height*self.width, 1).cpu())
+        # b2 = np.array(((1-mask) * mean_pixel)[0,0,:,:].view(1*self.height*self.width, 1).cpu())
+        # c2 = np.array(preserved[0,2,:,:].view(1*self.height*self.width, 1).cpu())
+        
+        # array = np.concatenate((a,b,c,a1,b1,c1,a2,b2,c2),axis=1)	
+        # np.savetxt('test.out', array)
+        
+        # import pandas as pd
+
+        # df = pd.DataFrame(array)
+        # filepath = 'my_excel_file.xlsx'
+        # df.to_excel(filepath, index=False)
+        
+        # print(noisy_img.view(1,1,3*self.height*self.width))
+        # print(pixels_t[0,0,:,:].sum(), pixels_0[0,0,:,:].sum(), preserved[0,0,:,:].sum())
+        # print(preserved.sum(), preserved.sum(dim=(1,2,3)), sum_pixel, mean_pixel, ((1-mask) * mean_pixel).sum(), noisy_img.sum())
+        # print(noisy_img.mean(dim=(1,2,3)))
+        # print(noisy_img.shape)
+        # print("=======================================================")
+        # exit(1)
+        
         
         return noisy_img, mean_masks
+    
+    # def degrade_dependent_sampling(self, img, mean_option=None, index=None):
+    #     """
+    #     Degrade input image with single mask or multi masks for 'sampling'.
+    #     Single mask is used for difference of two masks.
+    #     Multi masks are used for multi degradation.
+
+    #     Parameters:
+
+    #     Returns:
+        
+    #     """
+    #     masks   = torch.zeros(self.args.sample_num, self.height*self.width).to(img.device)
+    #     for i in range(self.args.sample_num):
+    #         masks[i, index[i]]  = 1.0
+    #     masks   = masks.view(self.args.sample_num, 1, self.height, self.width)
+        
+    #     try:
+    #         mean_pixel = float(mean_option)
+    #     except ValueError:
+    #         if mean_option == 'degraded_area':  # calculate with degraded pixels
+    #             sum_pixel   = (img * (1-masks)).sum(dim=(1,2,3), keepdim=True)
+    #             mean_pixel  = sum_pixel / (1-masks).sum(dim=(1,2,3), keepdim=True)
+    #         elif mean_option == 'non_degraded_area':    # calculate with non-degraded area
+    #             sum_pixel   = (img * masks).sum(dim=(1,2,3), keepdim=True)
+    #             mean_pixel  = sum_pixel / masks.sum(dim=(1,2,3), keepdim=True) * -1
+    #             mean_pixel[torch.isnan(mean_pixel)] = 0.0
+    #         elif mean_option == 'difference':
+    #             pass
+            
+    #     noisy_img   = ((1-masks) * mean_pixel) + masks * img
+    #     mean_masks  = ((1-masks) * mean_pixel) + masks
+        
+    #     return noisy_img, mean_masks
     
     
     def degrade_independent_sampling(self, white_area_num, img, mean_option=None):

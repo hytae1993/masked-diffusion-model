@@ -22,7 +22,7 @@ import os
 import random
 from tqdm.auto import tqdm
 
-from utils.datautils import normalize01
+from utils.datautils import normalize01, normalize01_global
 
 class Sampler:
     def __init__(self, 
@@ -175,7 +175,7 @@ class Sampler:
                 index_list  = None
             elif self.args.sampling_mask_dependency == 'dependent':
                 # index_list  = torch.randperm(len(timesteps_used_epoch), dtype=torch.int64)
-                index_list = torch.stack([torch.randperm(self.args.data_size * self.args.data_size) for _ in range(self.args.sample_num)])
+                index_list = torch.stack([torch.randperm(self.args.data_size * self.args.data_size) for _ in range(self.args.sample_num)]).to(model.device)
                 
             index_start = 0
             for i in range(len(timesteps_used_epoch)-1, -1, -1):
@@ -194,17 +194,17 @@ class Sampler:
                     black_area_num_difference   = black_area_num_t - black_area_num_next_t
                     
                     if self.args.sampling_mask_dependency == 'independent':
-                        degraded_difference, difference_mask    = self.Scheduler.degrade_independent_sampling(black_area_num_difference, sample_0, mean_option=self.args.mean_option)
+                        # degraded_difference, difference_mask    = self.Scheduler.degrade_independent_sampling(black_area_num_difference, sample_0, mean_option=self.args.mean_option)
+                        pass
                     elif self.args.sampling_mask_dependency == 'dependent':
-                        index_using = index_list[:, index_start:index_start+black_area_num_difference[0]]
-                        index_start = index_start + black_area_num_difference[0]
-                        degraded_difference, difference_mask    = self.Scheduler.degrade_dependent_sampling(sample_0, mean_option=self.args.mean_option, index=index_using)
+                        index_end   = index_start+black_area_num_difference[0]
+                        sample_t, difference_mask    = self.Scheduler.degrade_dependent_sampling(sample_t, sample_0, mean_option=self.args.mean_option, index_start=index_start, index_end=index_end, index_list=index_list)
+                        index_start = index_end
                     
                     difference_mask = difference_mask.expand_as(sample_0)
                     t_mask_list  = torch.cat((t_mask_list, difference_mask.unsqueeze(dim=1).cpu()), dim=1)
                     
-                    # sample_t            = sample_t - degraded_t + degraded_next_t
-                    sample_t    = sample_t + degraded_difference
+                    # sample_t    = sample_t + degraded_difference
                     t_list      = torch.cat((t_list, sample_t.unsqueeze(dim=1).cpu()), dim=1)
                     
                 sample_progress_bar.update(1)
@@ -552,16 +552,17 @@ class Sampler:
         return grid_sample
     
     
-    def _save_multi_index_image_grid(self, sample: torch.Tensor, option=None):
+    def _save_multi_index_image_grid(self, sample: torch.Tensor, nrow=None, option=None):
         # sample.shape = batch_size, timesteps, channle, height, width
         num_timesteps   = sample.shape[1]
-        nrow            = int(np.ceil(np.sqrt(num_timesteps))) 
+        if nrow == None:
+            nrow            = int(np.ceil(np.sqrt(num_timesteps))) 
         grid            = []
         for i in range(sample.shape[0]):
             if option == 'skip_first':
-                sample_i   = normalize01(sample[i][1:])
+                sample_i   = normalize01_global(sample[i][1:])
             else:
-                sample_i   = normalize01(sample[i])
+                sample_i   = normalize01_global(sample[i])
             grid.append(make_grid(sample_i, nrow=nrow, normalize=True))
             
         return grid
