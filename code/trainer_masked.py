@@ -245,7 +245,7 @@ class Trainer:
         dir_save            = dirs.list_dir['sample_img'] 
 
         # sample, sample_list, t_list, t_mask, next_t_mask, t_mask_list = self.Sampler.sample(self.model.eval(), self.timesteps_used_epoch)
-        sample, t_list, t_mask_list, sample_list  = self.Sampler.sample(self.model.eval(), self.timesteps_used_epoch)
+        sample, t_list, t_mask_list, sample_list, sample_back_values  = self.Sampler.sample(self.model.eval(), self.timesteps_used_epoch)
         file_save                       = 'sample_{:05d}.png'.format(epoch)
         self.sample_result              = self.Sampler._save_image_grid(sample, dir_save, file_save)
         
@@ -258,6 +258,23 @@ class Trainer:
         self.sample_trained_t_list      = self.Sampler._save_multi_index_image_grid(t_list, nrow=nrow)         # result of each t
         self.sample_trained_mask_list   = self.Sampler._save_multi_index_image_grid(t_mask_list, nrow=nrow)
         
+
+        
+        dir_save    = dirs.list_dir['train_loss'] 
+        file_loss = 'sample_back_values.png'
+        file_loss = os.path.join(dir_save, file_loss)
+        fig = plt.figure(figsize=(8, 8))
+        
+        plt.subplot(1,1,1)
+        colors = np.random.rand(self.args.sample_num, 3)
+        for i in range(self.args.sample_num):
+            plt.plot(sample_back_values[i].numpy(), color=colors[i])
+        plt.title('sample_back_values')
+        
+        plt.tight_layout()
+        plt.savefig(file_loss, bbox_inches='tight', dpi=100)
+        plt.close(fig)
+        
         
     def _save_ema_sample(self, dirs, epoch):
         dir_sample_save            = dirs.list_dir['ema_sample_img']
@@ -267,7 +284,7 @@ class Trainer:
         self.ema_model.copy_to(self.model.parameters())
         
         # ema_sample, ema_sample_list, ema_t_list, ema_t_mask, ema_next_t_mask, ema_mask_list = self.Sampler.sample(self.model.eval(), self.timesteps_used_epoch)
-        ema_sample, ema_t_list, ema_mask_list, ema_sample_list  = self.Sampler.sample(self.model.eval(), self.timesteps_used_epoch)
+        ema_sample, ema_t_list, ema_mask_list, ema_sample_list, ema_sample_back_values  = self.Sampler.sample(self.model.eval(), self.timesteps_used_epoch)
         # model_ema.temp => model.parameters
         self.ema_model.restore(self.model.parameters())
         
@@ -282,6 +299,24 @@ class Trainer:
         self.ema_sample_trained_x_0_list    = self.Sampler._save_multi_index_image_grid(ema_sample_list, nrow=nrow, option='skip_first')
         self.ema_sample_trained_t_list      = self.Sampler._save_multi_index_image_grid(ema_t_list, nrow=nrow)
         self.ema_sample_trained_mask_list   = self.Sampler._save_multi_index_image_grid(ema_mask_list, nrow=nrow)
+        
+        
+        
+        
+        dir_save    = dirs.list_dir['train_loss'] 
+        file_loss = 'ema_sample_back_values.png'
+        file_loss = os.path.join(dir_save, file_loss)
+        fig = plt.figure(figsize=(8, 8))
+        
+        plt.subplot(1,1,1)
+        colors = np.random.rand(self.args.sample_num, 3)
+        for i in range(self.args.sample_num):
+            plt.plot(ema_sample_back_values[i].numpy(), color=colors[i])
+        plt.title('ema_sample_back_values')
+        
+        plt.tight_layout()
+        plt.savefig(file_loss, bbox_inches='tight', dpi=100)
+        plt.close(fig)
 
 
     def _save_model(self, dirs: dict, epoch: int):

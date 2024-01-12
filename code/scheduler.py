@@ -220,16 +220,14 @@ class Scheduler:
 
             for j, k in black_pixels:
                 masks[i, 0, j, k] = 0.0
-                # for l in range(img.shape[1]):
-                #     masks[i, l, j, k] = 0.0
                     
         try:
-            mean_pixel = float(mean_option)
+            # mean_pixel = float(mean_option)
+            mean_pixel  = torch.ones(len(black_area_num), 1, 1, 1).to(img.device) * float(mean_option)
         except ValueError:
             if mean_option == 'degraded_area':  # calculate with degraded pixels
-                # sum_pixel   = (img * (1-masks)).sum(dim=(1,2,3), keepdim=True)
-                # mean_pixel  = sum_pixel / (1-masks).sum(dim=(1,2,3), keepdim=True)
-                pass
+                sum_pixel   = (img * (1-masks)).sum(dim=(1,2,3), keepdim=True)
+                mean_pixel  = sum_pixel / (1-masks).sum(dim=(1,2,3), keepdim=True)
                 
             elif mean_option == 'non_degraded_area':    # calculate with non-degraded area
                 sum_pixel   = (img * masks).sum(dim=(1,2,3), keepdim=True)
@@ -248,7 +246,7 @@ class Scheduler:
         return noisy_img, mean_masks
     
     
-    def degrade_dependent_sampling(self, sample_t, sample_0, mean_option, index_start, index_end, index_list):
+    def degrade_dependent_momentum_sampling(self, sample_t, sample_0, mean_option, index_start, index_end, index_list):
         """
         Degrade input image with single mask or multi masks for 'sampling'.
         Single mask is used for difference of two masks.
@@ -296,37 +294,7 @@ class Scheduler:
         noisy_img   = ((1-mask) * mean_pixel) + preserved
         mean_masks  = ((1-mask) * mean_pixel)
         
-        # a = np.array(noisy_img[0,0,:,:].view(1*self.height*self.width, 1).cpu())
-        # b = np.array(((1-mask) * mean_pixel)[0,0,:,:].view(1*self.height*self.width, 1).cpu())
-        # c = np.array(preserved[0,0,:,:].view(1*self.height*self.width, 1).cpu())
-        
-        # a1 = np.array(noisy_img[0,1,:,:].view(1*self.height*self.width, 1).cpu())
-        # b1 = np.array(((1-mask) * mean_pixel)[0,0,:,:].view(1*self.height*self.width, 1).cpu())
-        # c1 = np.array(preserved[0,1,:,:].view(1*self.height*self.width, 1).cpu())
-        
-        # a2 = np.array(noisy_img[0,2,:,:].view(1*self.height*self.width, 1).cpu())
-        # b2 = np.array(((1-mask) * mean_pixel)[0,0,:,:].view(1*self.height*self.width, 1).cpu())
-        # c2 = np.array(preserved[0,2,:,:].view(1*self.height*self.width, 1).cpu())
-        
-        # array = np.concatenate((a,b,c,a1,b1,c1,a2,b2,c2),axis=1)	
-        # np.savetxt('test.out', array)
-        
-        # import pandas as pd
-
-        # df = pd.DataFrame(array)
-        # filepath = 'my_excel_file.xlsx'
-        # df.to_excel(filepath, index=False)
-        
-        # print(noisy_img.view(1,1,3*self.height*self.width))
-        # print(pixels_t[0,0,:,:].sum(), pixels_0[0,0,:,:].sum(), preserved[0,0,:,:].sum())
-        # print(preserved.sum(), preserved.sum(dim=(1,2,3)), sum_pixel, mean_pixel, ((1-mask) * mean_pixel).sum(), noisy_img.sum())
-        # print(noisy_img.mean(dim=(1,2,3)))
-        # print(noisy_img.shape)
-        # print("=======================================================")
-        # exit(1)
-        
-        
-        return noisy_img, mean_masks
+        return noisy_img, mean_masks, mean_pixel
     
     # def degrade_dependent_sampling(self, img, mean_option=None, index=None):
     #     """
@@ -363,46 +331,77 @@ class Scheduler:
     #     return noisy_img, mean_masks
     
     
-    def degrade_independent_sampling(self, white_area_num, img, mean_option=None):
+    def degrade_independent_base_sampling(self, black_area_num_t, img, mean_option=None):
         """
-        Degrade input image with single mask or multi masks for 'sampling'.
-        Single mask is used for difference of two masks.
-        Multi masks are used for multi degradation.
+        Degrade input image with single mask for base 'sampling'.
+        Same as original ddpm sampling.
+        Randomly select degraded area.
 
         Parameters:
 
         Returns:
         
         """
-        masks = torch.zeros((len(white_area_num), img.shape[1], self.height, self.width)).to(img.device)
+        masks = torch.ones((len(black_area_num_t), self.height*self.width)).to(img.device)
         
-        for i in range(len(white_area_num)):
-            num_white_pixels = white_area_num[i].int()
-            
-            white_pixels = random.sample(range(self.height * self.width), num_white_pixels)
-            white_pixels = [(idx // self.width, idx % self.width) for idx in white_pixels]
-
-            for j, k in white_pixels:
-                for l in range(img.shape[1]):
-                    masks[i, l, j, k] = 1.0
-                    
+        for i, num in enumerate(black_area_num_t):
+            masks[i, torch.randperm(self.height*self.width)[:num]] = 0.0
+        masks   = masks.reshape(len(black_area_num_t), 1, self.height, self.width)
+        
         try:
-            mean_pixel = float(mean_option)
+            mean_pixel  = torch.ones(len(black_area_num_t), 1, 1, 1).to(img.device) * float(mean_option)
         except ValueError:
             if mean_option == 'degraded_area':  # calculate with degraded pixels
                 sum_pixel   = (img * (1-masks)).sum(dim=(1,2,3), keepdim=True)
-                mean_pixel  = sum_pixel / (1-masks).sum(dim=(1,2,3), keepdim=True)
+                mean_pixel  = sum_pixel / (1-masks).sum(dim=(1,2,3), keepdim=True) / img.shape[1]
             elif mean_option == 'non_degraded_area':    # calculate with non-degraded area
                 sum_pixel   = (img * masks).sum(dim=(1,2,3), keepdim=True)
-                mean_pixel  = sum_pixel / masks.sum(dim=(1,2,3), keepdim=True) * -1
+                mean_pixel  = sum_pixel / (1-masks).sum(dim=(1,2,3), keepdim=True) / img.shape[1] * -1
                 mean_pixel[torch.isnan(mean_pixel)] = 0.0
             elif mean_option == 'difference':
                 pass
             
-        noisy_img   = ((1-masks) * mean_pixel) + masks * img
-        mean_masks  = ((1-masks) * mean_pixel) + masks
+        degrade_img     = ((1-masks) * mean_pixel) + masks * img
+        degrade_mask    = ((1-masks) * mean_pixel) + masks
         
-        return noisy_img, mean_masks
+        return degrade_img, degrade_mask, mean_pixel
+    
+    
+    def degrade_dependent_base_sampling(self, img, mean_option, black_area_num, index_list):
+        """
+        Degrade input image with single mask for base 'sampling'.
+        Same as original ddpm sampling
+        Select degraded area respect to index_list for dependent between all time.
+
+        Parameters:
+
+        Returns:
+        
+        """
+        masks = torch.ones((self.args.sample_num, self.height*self.width)).to(img.device)
+        
+        index_using = index_list[:, :black_area_num]
+        masks.scatter_(1, index_using, 0)
+        
+        masks   = masks.reshape(self.args.sample_num, -1, self.height, self.width)
+        
+        try:
+            mean_pixel  = torch.ones(self.args.sample_num, 1, 1, 1).to(img.device) * float(mean_option)
+        except ValueError:
+            if mean_option == 'degraded_area':  # calculate with degraded pixels
+                sum_pixel   = (img * (1-masks)).sum(dim=(1,2,3), keepdim=True)
+                mean_pixel  = sum_pixel / (1-masks).sum(dim=(1,2,3), keepdim=True) / img.shape[1]
+            elif mean_option == 'non_degraded_area':    # calculate with non-degraded area
+                sum_pixel   = (img * masks).sum(dim=(1,2,3), keepdim=True)
+                mean_pixel  = sum_pixel / (1-masks).sum(dim=(1,2,3), keepdim=True) /  img.shape[1] * -1
+                mean_pixel[torch.isnan(mean_pixel)] = 0.0
+            elif mean_option == 'difference':
+                pass
+            
+        degrade_img     = ((1-masks) * mean_pixel) + masks * img
+        degrade_mask    = ((1-masks) * mean_pixel) + masks
+        
+        return degrade_img, degrade_mask, mean_pixel
     
     
     def get_schedule_shift_time(self, timesteps: torch.IntTensor) -> torch.FloatTensor:
