@@ -111,7 +111,7 @@ class Sampler:
                     
                     t_list      = torch.cat((t_list, sample_t.unsqueeze(dim=1).cpu()), dim=1)
                     
-                    mean_values[:, len(timesteps_used_epoch)-i-1] = mean_value.squeeze()
+                    mean_values[:, len(timesteps_used_epoch)-i-1] = mean_value.mean(dim=(1,2,3))
                     
                 sample_progress_bar.update(1)
         sample_progress_bar.close()
