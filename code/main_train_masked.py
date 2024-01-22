@@ -74,22 +74,9 @@ def get_model(args: dict):
             out_channels=args.out_channel,
             layers_per_block=2,
             block_out_channels=(128, 128, 256, 256, 512, 512),
-            down_block_types=(
-                "DownBlock2D",
-                "DownBlock2D",
-                "DownBlock2D",
-                "DownBlock2D",
-                "AttnDownBlock2D",
-                "DownBlock2D",
-            ),
-            up_block_types=(
-                "UpBlock2D",
-                "AttnUpBlock2D",
-                "UpBlock2D",
-                "UpBlock2D",
-                "UpBlock2D",
-                "UpBlock2D",
-            ),
+            down_block_types=("DownBlock2D", "DownBlock2D", "DownBlock2D", "DownBlock2D", "AttnDownBlock2D", "DownBlock2D"),
+            up_block_types=("UpBlock2D", "AttnUpBlock2D", "UpBlock2D", "UpBlock2D", "UpBlock2D", "UpBlock2D")
+,
         )
     else:
         config  = UNet2DModel.load_config(args.model)
@@ -364,6 +351,7 @@ if __name__ == '__main__':
     parser.add_argument('--ddpm_num_steps', type=int, default=1000)
     parser.add_argument('--updated_ddpm_num_steps', help='removed duplicated time step after time scheduling', type=int, default=1000)
     parser.add_argument("--ddpm_schedule", type=str, default="linear")
+    parser.add_argument("--ddpm_schedule_base", type=float, default=10.0)
     parser.add_argument('--scheduler_num_scale_timesteps', type=int, default=1, help='1/2^n, 1/2^{n-1}, ..., 1/2^0 -> 1 use every timesteps')
     parser.add_argument("--sampling", type=str, default="base")
     parser.add_argument("--sampling_mask_dependency", help='dependcy of degradation mask between t', type=str, default="independent", choices=['dependent', 'independent'])

@@ -51,11 +51,14 @@ class Trainer:
         
         self.global_step        = 0
         
-        self.visual_names       = ['input','degraded_img', 'degradation_mask', 'shifted_degrade_img', 'shifted_input', 'mask', 'reconstructed_img', 'inverse_shifted_reconstrucion', \
-                                    'sample_result', 'sample_trained_x_0_list', 'sample_trained_t_list', 'sample_trained_mask_list', \
-                                    'ema_sample_result', 'ema_sample_trained_x_0_list', 'ema_sample_trained_t_list', 'ema_sample_trained_mask_list']
+        self.visual_names       = ['input','degraded_img', 'degradation_mask', 'mask', 'reconstructed_img', 'inverse_shifted_reconstrucion',\
+                                    # 'sample_result', 'sample_trained_x_0_list', 'sample_trained_t_list', 'sample_trained_mask_list', 'sample_trained_t_shift_list', 'sample_trained_x_0_shift_list', \
+                                    'ema_sample_result', 'ema_sample_trained_x_0_list', 'ema_sample_trained_t_list', 'ema_sample_trained_mask_list', 'ema_sample_trained_t_shift_list', 'ema_sample_trained_x_0_shift_list']
         
-        self.loss_names         = ['reconstruct_loss', 'learning_rate', 'mean']
+        self.loss_names         = ['reconstruct_loss', 'learning_rate', 'reconstruct_train_mean', 'degraded_train_mean']
+        
+        # self.mean_names         = ['sample_mean', 'sample_t_mean', 'sample_0_mean', 'ema_sample_mean', 'ema_sample_t_mean', 'ema_sample_0_mean', 'ema_sample_trained_t_shift_list', 'ema_sample_trained_x_0_shift_list']
+        self.mean_names         = ['ema_sample_mean', 'ema_sample_t_mean', 'ema_sample_0_mean', 'ema_sample_shift_t_mean', 'ema_sample_0_shift_mean']
         
         self.timesteps_used_epoch   = None
         
@@ -65,7 +68,7 @@ class Trainer:
         return loss
     
     def _shift_mean(self, img: torch.Tensor):
-        mean    = img.mean(dim=(1,2,3), keepdim=True)
+        mean    = img.mean(dim=(2,3), keepdim=True)
         img     = img - mean
         
         return img
@@ -75,10 +78,10 @@ class Trainer:
         # time
         if 'huggingface' in self.args.dir_dataset:
             try:
-                self.input     = input["image"]
-                self.label     = input["label"]
+                self.input   = input["image"]
+                self.label   = input["label"]
             except KeyError:
-                self.input     = input["image"]
+                self.input   = input["image"]
         else:
             self.input     = input[0]
 
@@ -93,7 +96,6 @@ class Trainer:
         timesteps           = torch.index_select(torch.tensor(self.timesteps_used_epoch, device=timeindex.device), 0, timeindex)
         
         black_area_num      = self.Scheduler.get_black_area_num_pixels_time(timesteps)      # get number of removed pixels at each timestep 
-        
         self.degraded_img, self.degradation_mask  = self.Scheduler.degrade_training(black_area_num, self.input, mean_option=self.args.mean_option)
         
         # ===================================================================================
@@ -126,16 +128,19 @@ class Trainer:
                 self.ema_model.step(self.model.parameters())
             self.global_step += 1
             
-            if self.accelerator.is_main_process:
-                if self.global_step % self.args.checkpointing_steps == 0:
-                    save_path   = os.path.join(dirs.list_dir['checkpoint'], f"checkpoint-{self.global_step}")
-                    self.accelerator.save_state(save_path)
+            # if self.accelerator.is_main_process:
+            #     if self.global_step % self.args.checkpointing_steps == 0:
+            #         save_path   = os.path.join(dirs.list_dir['checkpoint'], f"checkpoint-{self.global_step}")
+            #         self.accelerator.save_state(save_path)
         
         # ===================================================================================
         # inverse shift 
         # ===================================================================================
         self.inverse_shifted_reconstrucion  = self.Scheduler.perturb_shift_inverse(self.reconstructed_img, shift)
-        self.mean   = self.inverse_shifted_reconstrucion.mean()
+        
+        self.inverse_reconstruct_train_mean = self.inverse_shifted_reconstrucion.mean()
+        self.reconstruct_train_mean         = self.reconstructed_img.mean()
+        self.degraded_train_mean            = self.degraded_img.mean()
         
         self.learning_rate  = self.lr_scheduler.get_last_lr()[0]
         self.lr_list.append(self.learning_rate)
@@ -145,12 +150,13 @@ class Trainer:
             losses = self.get_current_losses()
             visualizer.plot_current_losses(epoch, losses)
         
-        return self.reconstruct_loss.item(), self.mean.item()
+        return self.reconstruct_loss.item()
 
 
     def _run_epoch(self, epoch: int, epoch_length: int, resume_step: int, dirs: dict, visualizer):
-        loss_batch              = []
-        mean_batch              = []
+        loss_batch                      = []
+        reconstruct_train_mean_batch    = []
+        degraded_train_mean_batch       = []
         
         batch_progress_bar   = tqdm(total=len(self.dataloader), disable=not self.accelerator.is_local_main_process, leave=False)
         batch_progress_bar.set_description(f"Batch ")
@@ -159,16 +165,14 @@ class Trainer:
         
         for i, input in enumerate(self.dataloader, 0):
             # time
-            loss, mean = self._run_batch(i, input, epoch, epoch_length, resume_step, dirs, visualizer)
+            loss = self._run_batch(i, input, epoch, epoch_length, resume_step, dirs, visualizer)
             batch_progress_bar.update(1)
             
             if self.accelerator.is_main_process: 
-                
                 loss_batch.append(loss)
-                mean_batch.append(mean)
                 
         batch_progress_bar.close()
-        return loss_batch, mean_batch
+        return loss_batch
     
     
     def train(self, epoch_start: int, epoch_length: int, resume_step: int, global_step: int, dirs: dict, visualizer):
@@ -191,32 +195,30 @@ class Trainer:
             if self.accelerator.is_main_process and visualizer is not None:
                 visualizer.reset()
             # self.dataloader.batch_sampler.batch_sampler.sampler.set_epoch(epoch)
-            loss, mean = self._run_epoch(epoch, epoch_length, resume_step, dirs, visualizer)
+            loss    = self._run_epoch(epoch, epoch_length, resume_step, dirs, visualizer)
             
             end = timer()
             elapsed_time = end - start
-            
             if self.accelerator.is_main_process:
                 loss_mean       = statistics.mean(loss)
                 loss_std        = statistics.stdev(loss, loss_mean)
-                self.reconstruct_loss   = loss_mean
+                reconstruct_loss    = loss_mean
                 
-                mean_mean       = statistics.mean(mean)
-                self.mean       = mean_mean
-
-                loss_mean_epoch.append(loss_mean)
-                loss_std_epoch.append(loss_std)
+                # loss_mean_epoch.append(loss_mean)
+                # loss_std_epoch.append(loss_std)
                 
                 if epoch > 0 and epoch % self.args.save_images_epochs == 0 or epoch == (epoch_start+epoch_length-1) or (epoch+1) % (epoch_length / self.args.scheduler_num_scale_timesteps) == 0:
                 # if epoch == epoch_start or epoch % self.args.save_images_epochs == 0 or epoch == (epoch_start+epoch_length-1) or (epoch+1) % (epoch_length / self.args.scheduler_num_scale_timesteps) == 0:
     
-                    self._save_model(dirs, epoch)
+                    # self._save_model(dirs, epoch)
                     self._save_sample(dirs, epoch)
                     if self.args.use_ema:
                         self._save_ema_sample(dirs, epoch)
                     # save to wandb
                     if visualizer is not None:
                         visualizer.display_current_results(self.get_current_visuals(), epoch)
+                        means = self.get_current_mean()
+                        visualizer.plot_current_losses(epoch, means)
             
             epoch_progress_bar.update(1)
         
@@ -240,39 +242,104 @@ class Trainer:
                 errors_ret[name] = float(getattr(self, name))  # float(...) works for both scalar tensor and float number
         return errors_ret
     
+    def get_current_mean(self):
+        errors_ret = OrderedDict()
+        for name in self.mean_names:
+            if isinstance(name, str):
+                errors_ret[name] = float(getattr(self, name))  # float(...) works for both scalar tensor and float number
+        return errors_ret
  
     def _save_sample(self, dirs, epoch):
         dir_save            = dirs.list_dir['sample_img'] 
 
         # sample, sample_list, t_list, t_mask, next_t_mask, t_mask_list = self.Sampler.sample(self.model.eval(), self.timesteps_used_epoch)
-        sample, t_list, t_mask_list, sample_list  = self.Sampler.sample(self.model.eval(), self.timesteps_used_epoch)
+        sample, t_list, t_mask_list, sample_list, sample_back_values, sample_t_shift_list, sample_shift_list    = self.Sampler.sample(self.model.eval(), self.timesteps_used_epoch)
         file_save                       = 'sample_{:05d}.png'.format(epoch)
         self.sample_result              = self.Sampler._save_image_grid(sample, dir_save, file_save)
         
-        self.sample_trained_x_0_list    = self.Sampler._save_multi_index_image_grid(sample_list, option='skip_first')    # result of x_0 for each t
-        self.sample_trained_t_list      = self.Sampler._save_multi_index_image_grid(t_list)         # result of each t
-        self.sample_trained_mask_list   = self.Sampler._save_multi_index_image_grid(t_mask_list)
+        self.sample_mean    = sample.mean()
+        self.sample_t_mean  = t_list.mean()
+        self.sample_0_mean  = sample_list.mean()
+        
+        nrow = int(np.ceil(np.sqrt(sample_list.shape[1])))
+        self.sample_trained_x_0_list        = self.Sampler._save_multi_index_image_grid(sample_list, nrow=nrow, option='skip_first')    # result of x_0 for each t
+        self.sample_trained_t_list          = self.Sampler._save_multi_index_image_grid(t_list, nrow=nrow)         # result of each t
+        self.sample_trained_mask_list       = self.Sampler._save_multi_index_image_grid(t_mask_list, nrow=nrow)
+        self.sample_trained_t_shift_list    = self.Sampler._save_multi_index_image_grid(sample_t_shift_list, nrow=nrow, option='skip_first')
+        self.sample_trained_x_0_shift_list  = self.Sampler._save_multi_index_image_grid(sample_shift_list, nrow=nrow, option='skip_first')
+        
+
+        
+        dir_save    = dirs.list_dir['train_loss'] 
+        file_loss = 'sample_back_values.png'
+        file_loss = os.path.join(dir_save, file_loss)
+        fig = plt.figure(figsize=(8, 8))
+        
+        plt.subplot(1,1,1)
+        colors = np.random.rand(self.args.sample_num, 3)
+        for i in range(self.args.sample_num):
+            plt.plot(sample_back_values[i].numpy(), color=colors[i])
+        plt.title('sample_back_values')
+        
+        plt.tight_layout()
+        plt.savefig(file_loss, bbox_inches='tight', dpi=100)
+        plt.close(fig)
         
         
     def _save_ema_sample(self, dirs, epoch):
         dir_sample_save            = dirs.list_dir['ema_sample_img']
-        dir_sample_all_t_save      = dirs.list_dir['ema_sample_all_t_img']
         
         self.ema_model.store(self.model.parameters())
         # model_ema.parameters => model.parameters
         self.ema_model.copy_to(self.model.parameters())
         
         # ema_sample, ema_sample_list, ema_t_list, ema_t_mask, ema_next_t_mask, ema_mask_list = self.Sampler.sample(self.model.eval(), self.timesteps_used_epoch)
-        ema_sample, ema_t_list, ema_mask_list, ema_sample_list  = self.Sampler.sample(self.model.eval(), self.timesteps_used_epoch)
+        ema_sample, ema_t_list, ema_mask_list, ema_sample_list, ema_sample_back_values, ema_sample_t_shift_list, ema_sample_shift_list  = self.Sampler.sample(self.model.eval(), self.timesteps_used_epoch)
         # model_ema.temp => model.parameters
         self.ema_model.restore(self.model.parameters())
+        
+        self.ema_sample_mean    = ema_sample.mean()
+        self.ema_sample_t_mean  = ema_t_list.mean()
+        self.ema_sample_0_mean  = ema_sample_list.mean()
+        self.ema_sample_shift_t_mean    = ema_sample_t_shift_list.mean()
+        self.ema_sample_0_shift_mean    = ema_sample_shift_list.mean()
         
         file_ema_save                       = 'ema_sample_{:05d}.png'.format(epoch)
         self.ema_sample_result              = self.Sampler._save_image_grid(ema_sample, dir_sample_save, file_ema_save)
         
-        self.ema_sample_trained_x_0_list    = self.Sampler._save_multi_index_image_grid(ema_sample_list, option='skip_first')
-        self.ema_sample_trained_t_list      = self.Sampler._save_multi_index_image_grid(ema_t_list)
-        self.ema_sample_trained_mask_list   = self.Sampler._save_multi_index_image_grid(ema_mask_list)
+        nrow = int(np.ceil(np.sqrt(ema_sample_list.shape[1])))
+        self.ema_sample_trained_x_0_list        = self.Sampler._save_multi_index_image_grid(ema_sample_list, nrow=nrow, option='skip_first')
+        self.ema_sample_trained_t_list          = self.Sampler._save_multi_index_image_grid(ema_t_list, nrow=nrow)
+        self.ema_sample_trained_mask_list       = self.Sampler._save_multi_index_image_grid(ema_mask_list, nrow=nrow)
+        self.ema_sample_trained_t_shift_list    = self.Sampler._save_multi_index_image_grid(ema_sample_t_shift_list, nrow=nrow, option='skip_first')
+        self.ema_sample_trained_x_0_shift_list  = self.Sampler._save_multi_index_image_grid(ema_sample_shift_list, nrow=nrow, option='skip_first')
+        
+        
+        dir_save    = dirs.list_dir['train_loss'] 
+        file_loss = 'ema_sample_back_values.png'
+        file_loss = os.path.join(dir_save, file_loss)
+        fig = plt.figure(figsize=(24, 8))
+        
+        ax1 = fig.add_subplot(131)
+        colors = np.random.rand(self.args.sample_num, 3)
+        for i in range(self.args.sample_num):
+            ax1.plot(ema_sample_back_values[i].numpy(), color=colors[i])
+        ax1.title.set_text('ema_sample_back_values')
+        
+        ax2 = fig.add_subplot(132)
+        ax2.plot(ema_t_list[0][1:,:,:,:].mean(dim=(1,2,3)).numpy(), color='r')
+        ax2.plot(ema_sample_t_shift_list[0][1:,:,:,:].mean(dim=(1,2,3)).numpy(), color='b')
+        ax2.title.set_text('ema_sample_t_mean_1_img')
+        
+        ax3 = fig.add_subplot(133)
+        ax3.plot(ema_sample_list[0][1:,:,:,:].mean(dim=(1,2,3)).numpy(), color='r')
+        ax3.plot(ema_sample_shift_list[0][1:,:,:,:].mean(dim=(1,2,3)).numpy(), color='b')
+        ax3.title.set_text('ema_sample_0_mean_1_img')
+        
+        
+        plt.tight_layout()
+        plt.savefig(file_loss, bbox_inches='tight', dpi=100)
+        plt.close(fig)
 
 
     def _save_model(self, dirs: dict, epoch: int):

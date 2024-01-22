@@ -67,9 +67,9 @@ class Scheduler:
             time    = (time-1).int()
         except AttributeError:
             time    = time - 1
-            
+        
         black_area_num_pixles_time = torch.index_select(torch.tensor(self.black_area_pixels, device=time.device), 0, time)
-    
+        
         return black_area_num_pixles_time
     
     
@@ -89,19 +89,30 @@ class Scheduler:
         black_area_num_pixel    = np.array(sorted(unique_linear_indices)[:n])
         return black_area_num_pixel
     
-    def get_extract_log_scale_random_sublist(self, time_list, n):
-        if n > len(time_list):
+    
+    def get_extract_log_scale_random_sublist(self, time_list, ddpm_num_steps):
+        if ddpm_num_steps > len(time_list):
             raise ValueError("Desired to remove number of pixels is greater than the size of input image.")
 
-        # Generate logarithmic scale indices
-        max_index   = len(time_list) - 1
-        log_indices = [int(round(10**random.uniform(0, math.log10(max_index)))) for _ in range(n)]
+        # # Generate logarithmic scale indices
+        # max_index   = len(time_list) - 1
+        # log_indices = [int(round(10**random.uniform(0, math.log10(max_index)))) for _ in range(n)]
 
-        # Ensure unique indices
-        unique_log_indices = list(set(log_indices))
+        # # Ensure unique indices
+        # unique_log_indices = list(set(log_indices))
         
-        # Take the first n unique log-scale indices
-        black_area_num_pixel = np.array([time_list[i] for i in sorted(unique_log_indices)[:n]])
+        # # Take the first n unique log-scale indices
+        # black_area_num_pixel = np.array([time_list[i] for i in sorted(unique_log_indices)[:n]])
+        
+        base    = self.args.ddpm_schedule_base # default 10.0
+        x       = np.linspace(0, 1, ddpm_num_steps)  
+        y       = x ** base * (self.image_size - 1) + 1
+        
+        log_indices         = [int(val) for val in y]
+        unique_log_indices  = list(sorted(set(log_indices)))
+        
+        black_area_num_pixel    = np.array(unique_log_indices)
+        
         return black_area_num_pixel
     
     
@@ -251,7 +262,7 @@ class Scheduler:
         degrade_img = ((1-masks) * mean_pixel) + masks * img
         mean_masks  = ((1-masks) * mean_pixel) + masks
         
-        return degrade_img, mean_masks
+        return degrade_img, mean_masks, mean_pixel, masks
     
     
     def degrade_dependent_momentum_sampling(self, sample_t, sample_0, mean_option, index_start, index_end, index_list):
@@ -415,7 +426,7 @@ class Scheduler:
     
     
     def get_schedule_shift_time(self, timesteps: torch.IntTensor) -> torch.FloatTensor:
-        random      = torch.FloatTensor(len(timesteps)).uniform_(-1.0, +1.0)
+        random      = torch.FloatTensor(len(timesteps)).uniform_(-5.0, +5.0)
         random      = random.to(timesteps.device)
         timesteps   = timesteps.int()
         ratio       = torch.index_select(self.ratio_list.to(timesteps.device), 0, timesteps-1)
