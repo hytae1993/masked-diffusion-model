@@ -15,6 +15,7 @@ def DatasetUtils(data_path: str, data_name: str, data_set: str, data_height: int
         torchvision.transforms.Resize([data_height, data_width]),
         torchvision.transforms.ToTensor(),
         # torchvision.transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
+        torchvision.transforms.Lambda(lambda t: (t - torch.mean(t)) / torch.std(t)), # mean 0, std 1
         ])
     transform_GRAY = torchvision.transforms.Compose([ 
         torchvision.transforms.Resize([data_height, data_width]),
@@ -259,6 +260,40 @@ def DatasetUtils(data_path: str, data_name: str, data_set: str, data_height: int
                 idx_label = np.logical_or(idx_label, dataset.targets == label)
             dataset.data    = dataset.data[idx_label]
             dataset.targets = dataset.targets[idx_label]
+            
+    # ======================================================================
+    # Metfaces 
+    # ======================================================================
+    elif data_name.lower() == 'metfaces':
+        path        = join(data_path, data_name, data_set)
+        dataset     = torchvision.datasets.ImageFolder(root=path, transform=transform_RGB)
+        
+    # ======================================================================
+    # afhqv2
+    # source: https://github.com/clovaai/stargan-v2/blob/master/README.md
+    # ======================================================================
+    elif data_name.lower() == 'afhqv2':
+        # cat: 0, dog: 1, wild: 2
+        if data_set.lower() == 'train' or data_set.lower() == 'test':
+            data_path   = join(data_path, data_name.lower(), data_set.lower())
+            dataset     = torchvision.datasets.ImageFolder(root=data_path, transform=transform_RGB)
+            '''
+            if data_subset_use == True:
+                dataset = create_subset(dataset, data_subset_label)
+            ''' 
+        # elif data_set.lower() == 'all':
+        #     data_path_train = join(path, data_name.lower(), 'train')
+        #     dataset_train   = torchvision.datasets.ImageFolder(root=data_path_train, transform=transform)
+        #     data_path_test  = join(path, data_name.lower(), 'test')
+        #     dataset_test    = torchvision.datasets.ImageFolder(root=data_path_test, transform=transform)
+        #     if use_label == True:
+        #         dataset_train   = create_subset(dataset_train, label)
+        #         dataset_test    = create_subset(dataset_test, label)
+        #     dataset = torch.utils.data.ConcatDataset([dataset_train, dataset_test]) 
+        else:
+            assert False, "data_set must be either 'train' or 'test' or 'all'"
+        
+    return dataset
             
             
     if data_subset:
