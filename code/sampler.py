@@ -22,7 +22,7 @@ import os
 import random
 from tqdm.auto import tqdm
 
-from utils.datautils import normalize01, normalize01_global
+from utils.datautils import normalize01, normalize01_global, normalize01_2
 
 class Sampler:
     def __init__(self, 
@@ -53,8 +53,8 @@ class Sampler:
         '''
         if self.args.sampling == 'base':
             if self.args.method == 'base':
-                sample, t_list, t_mask_list, sample_list, mask_list, mean_values = self._sample(model, timesteps_used_epoch) 
-                return sample, t_list, t_mask_list, sample_list, mask_list, mean_values
+                sample_0, t_list, mean_mask_list, sample_list, mask_list, degrade_mask_list = self._sample(model, timesteps_used_epoch) 
+                return sample_0, t_list, mean_mask_list, sample_list, mask_list, degrade_mask_list
             elif self.args.method == 'mean_shift':
                 sample, t_list, t_mask_list, sample_list, mean_values, sample_t_shift_list, sample_shift_list = self._sample_mean_shift(model, timesteps_used_epoch) 
                 return sample, t_list, t_mask_list, sample_list, mean_values, sample_t_shift_list, sample_shift_list
@@ -73,12 +73,13 @@ class Sampler:
 
 
     def _sample(self, model: Module, timesteps_used_epoch):
-        latent      = self._get_latent_initial(model)
-        sample_t    = latent.to(model.device)
-        sample_list = sample_t.unsqueeze(dim=1).cpu()
-        t_list      = sample_t.unsqueeze(dim=1).cpu()
-        t_mask_list = sample_t.unsqueeze(dim=1).cpu()
-        mask_list   = sample_t.unsqueeze(dim=1).cpu()
+        latent              = self._get_latent_initial(model)
+        sample_t            = latent.to(model.device)
+        sample_list         = sample_t.unsqueeze(dim=1).cpu()
+        t_list              = sample_t.unsqueeze(dim=1).cpu()
+        degrade_mask_list   = sample_t.unsqueeze(dim=1).cpu()
+        mean_mask_list      = sample_t.unsqueeze(dim=1).cpu()
+        mask_list           = sample_t.unsqueeze(dim=1).cpu()
         
         with torch.no_grad():
             sample_progress_bar = tqdm(total=len(timesteps_used_epoch), leave=False)
@@ -108,21 +109,21 @@ class Sampler:
                     # white_area_num_t            = self.args.data_size * self.args.data_size - black_area_num_t
                     
                     if self.args.sampling_mask_dependency == 'independent':
-                        sample_t, degrade_mask, mean_value    = self.Scheduler.degrade_independent_base_sampling(black_area_num_t, sample_0, mean_option=self.args.mean_option)
+                        sample_t, degrade_mask, mean_mask    = self.Scheduler.degrade_independent_base_sampling(black_area_num_t, sample_0, mean_option=self.args.mean_option)
                     elif self.args.sampling_mask_dependency == 'dependent':
-                        sample_t, degrade_mask, mean_value    = self.Scheduler.degrade_dependent_base_sampling(sample_0, mean_option=self.args.mean_option, black_area_num=black_area_num_t[0], index_list=index_list)
+                        sample_t, degrade_mask, mean_mask    = self.Scheduler.degrade_dependent_base_sampling(sample_0, mean_option=self.args.mean_option, black_area_num=black_area_num_t[0], index_list=index_list)
                     
-                    degrade_mask = degrade_mask.expand_as(sample_0)
-                    t_mask_list  = torch.cat((t_mask_list, degrade_mask.unsqueeze(dim=1).cpu()), dim=1)
+                    degrade_mask        = degrade_mask.expand_as(sample_0)
+                    mean_mask_list      = torch.cat((mean_mask_list, mean_mask.unsqueeze(dim=1).cpu()), dim=1)
+                    degrade_mask_list   = torch.cat((degrade_mask_list, degrade_mask.unsqueeze(dim=1).cpu()), dim=1)
                     
                     t_list      = torch.cat((t_list, sample_t.unsqueeze(dim=1).cpu()), dim=1)
                     
-                    mean_values[:, len(timesteps_used_epoch)-i-1] = mean_value.mean(dim=(1,2,3))
             
                 sample_progress_bar.update(1)
         sample_progress_bar.close()
         
-        return sample_0, t_list, t_mask_list, sample_list, mask_list, mean_values
+        return sample_0, t_list, mean_mask_list, sample_list, mask_list, degrade_mask_list
     
     
     def _sample_mean_shift(self, model: Module, timesteps_used_epoch):
@@ -518,11 +519,15 @@ class Sampler:
         return sample_shift
 
 
-    def _save_image_grid(self, sample: torch.Tensor, dir_save=None, file_sample=None):
+    def _save_image_grid(self, sample: torch.Tensor, normalization='global', dir_save=None, file_sample=None):
         batch_size  = sample.shape[0]
         nrow        = int(np.ceil(np.sqrt(batch_size)))
-        sample      = normalize01(sample)
-        grid_sample = make_grid(sample, nrow=nrow, normalize=True)
+        if normalization == 'global':
+            sample      = normalize01_global(sample)
+        elif normalization == 'image':
+            sample      = normalize01(sample)
+            
+        grid_sample = make_grid(sample, nrow=nrow, normalize=False, scale_each=False)
         
         if dir_save is not None and file_sample is not None:
             file_sample = os.path.join(dir_save, file_sample)
@@ -531,21 +536,35 @@ class Sampler:
         return grid_sample
     
     
-    def _save_multi_index_image_grid(self, sample: torch.Tensor, nrow=None, option=None):
+    def _save_multi_index_image_grid(self, sample: torch.Tensor, nrow=None, normalization='global', option=None):
         # sample.shape = batch_size, timesteps, channle, height, width
         num_timesteps   = sample.shape[1]
         if nrow == None:
             nrow            = int(np.ceil(np.sqrt(num_timesteps))) 
-        grid            = []
+        grids           = []
         for i in range(sample.shape[0]):
             if option == 'skip_first':
-                sample_i   = normalize01(sample[i][1:])
-            else:
-                sample_i   = normalize01(sample[i])
-            grid.append(make_grid(sample_i, nrow=nrow, normalize=True))
+                if normalization == 'global':
+                    sample_i   = normalize01_global(sample[i][1:])
+                elif normalization == 'image':
+                    sample_i   = normalize01(sample[i][1:])
+                elif normalization == None:
+                    sample_i    = sample[i][1:]
             
-        return grid
-        
+            else:
+                if normalization == 'global':
+                    sample_i   = normalize01_global(sample[i])
+                elif normalization == 'image':
+                    sample_i   = normalize01(sample[i])
+                elif normalization == None:
+                    sample_i    = sample[i]
+            
+            grid    = make_grid(sample_i, nrow=nrow, normalize=False, scale_each=False)
+            
+            grids.append(grid)
+            
+        return grids
+    
     
     def _save_image_multi_grid(self, sample: list, sample_t: list, dir_save: str, file_sample: str):
         batch_size  = sample[0].shape[0]
