@@ -101,7 +101,7 @@ class Trainer:
     
         
         black_area_num      = self.Scheduler.get_black_area_num_pixels_time(timesteps)      # get number of removed pixels at each timestep 
-        self.degraded_img, self.degradation_mask, self.mean_pixel, self.degrade_binary_masks  = self.Scheduler.degrade_training(black_area_num, self.input, mean_option=self.args.mean_option)
+        self.degraded_img, self.degrade_binary_masks, self.degradation_mask, self.mean_pixel = self.Scheduler.degrade_training(black_area_num, self.input, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
         
         # ===================================================================================
         # reconstruct and train 
@@ -197,6 +197,10 @@ class Trainer:
         
         updated_ddpm_num_steps              = self.Scheduler.update_ddpm_num_steps(self.args.ddpm_num_steps)
         self.args.updated_ddpm_num_steps    = updated_ddpm_num_steps
+        
+        # print(self.args.updated_ddpm_num_steps)
+        # print(self.Scheduler.get_black_area_num_pixels_all())
+        # exit(1)
         
         epoch_length    = epoch_length
         epoch_start     = epoch_start

@@ -356,6 +356,7 @@ if __name__ == '__main__':
     parser.add_argument("--sampling", type=str, default="base")
     parser.add_argument("--sampling_mask_dependency", help='dependcy of degradation mask between t', type=str, default="independent", choices=['dependent', 'independent'])
     parser.add_argument('--mean_option', default=0)
+    parser.add_argument('--mean_area', default='image-wise',choices=['channel-wise', 'image-wise'])
     parser.add_argument('--mean_value_accumulate', type=eval, default=False, choices=[True, False])
     # ======================================================================
     parser.add_argument('--sample_num', help='number of samples during the training', type=int, default=100)

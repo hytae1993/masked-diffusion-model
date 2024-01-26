@@ -109,7 +109,7 @@ class Sampler:
                     # white_area_num_t            = self.args.data_size * self.args.data_size - black_area_num_t
                     
                     if self.args.sampling_mask_dependency == 'independent':
-                        sample_t, degrade_mask, mean_mask    = self.Scheduler.degrade_independent_base_sampling(black_area_num_t, sample_0, mean_option=self.args.mean_option)
+                        sample_t, degrade_mask, mean_mask    = self.Scheduler.degrade_independent_base_sampling(black_area_num_t, sample_0, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
                     elif self.args.sampling_mask_dependency == 'dependent':
                         sample_t, degrade_mask, mean_mask    = self.Scheduler.degrade_dependent_base_sampling(sample_0, mean_option=self.args.mean_option, black_area_num=black_area_num_t[0], index_list=index_list)
                     
