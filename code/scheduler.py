@@ -136,10 +136,11 @@ class Scheduler:
         if ddpm_num_steps > len(time_list):
             raise ValueError("Desired to remove number of pixels is greater than the size of input image.")
         
-        steepness_factor = 1.5
+        # steepness_factor = 1.5
+        base    = self.args.ddpm_schedule_base # default 1.5, define steepness of sigmoid
         result = []
         for i in range(ddpm_num_steps):
-            x = 1 + (self.image_size - 1) * (1 / (1 + math.exp(-0.1 * steepness_factor * (i - ddpm_num_steps / 2))))
+            x = 1 + (self.image_size - 1) * (1 / (1 + math.exp(-0.1 * base * (i - ddpm_num_steps / 2))))
             result.append(int(x))
         
         # Normalize the list to start from 1 and have a smooth increase
@@ -265,18 +266,6 @@ class Scheduler:
         Returns:
         - noisy_img: Input image in which areas to be removed are filled with some value
         """
-        # masks = torch.ones((len(black_area_num), 1, self.height, self.width)).to(img.device)
-        
-        # for i in range(len(black_area_num)):
-        #     num_black_pixels = black_area_num[i].int()
-            
-        #     black_pixels = random.sample(range(self.height * self.width), num_black_pixels)
-        #     black_pixels = [(idx // self.width, idx % self.width) for idx in black_pixels]
-
-        #     for j, k in black_pixels:
-        #         masks[i, 0, j, k] = 0.0
-                
-         
         masks = torch.ones((len(black_area_num), self.height*self.width)).to(img.device)
         
         for i, num in enumerate(black_area_num):
@@ -362,6 +351,42 @@ class Scheduler:
         return noisy_img, mean_masks, mean_pixel
     
     
+    def degrade_index_sampling(self, index, black_area_num_t, img, mean_option=None, mean_area=None):
+        masks   = torch.ones((self.args.sample_num), self.height*self.width).to(img.device)
+        
+        index_using = index[:, :black_area_num_t[0]]
+        masks.scatter_(1, index_using, 0)
+        
+        masks   = masks.reshape(len(black_area_num_t), 1, self.height, self.width)
+        masks   = masks.expand_as(img)
+        
+        try:
+            mean_pixel  = torch.ones(len(black_area_num_t), img.shape[1], 1, 1).to(img.device) * float(mean_option)
+        except ValueError:
+            if mean_option == 'degraded_area':  # calculate with degraded pixels
+                if mean_area == 'image-wise':
+                    sum_pixel   = (img * (1-masks)).sum(dim=(1,2,3), keepdim=True)
+                    mean_pixel  = sum_pixel / (1-masks).sum(dim=(1,2,3), keepdim=True)
+                    
+                elif mean_area == 'channel-wise':
+                    sum_pixel   = (img * (1-masks)).sum(dim=(2,3), keepdim=True)
+                    mean_pixel  = sum_pixel / (1-masks).sum(dim=(2,3), keepdim=True)
+                
+            elif mean_option == 'non_degraded_area':    # calculate with non-degraded area
+                sum_pixel   = (img * masks).sum(dim=(2,3), keepdim=True)
+                mean_pixel  = sum_pixel / (1-masks).sum(dim=(2,3), keepdim=True) * -1
+                mean_pixel[torch.isnan(mean_pixel)] = 0.0
+                
+            elif mean_option == 'difference':
+                pass
+            
+        degrade_img     = ((1-masks) * mean_pixel) + masks * img
+        degrade_mask    = masks
+        mean_mask       = mean_pixel * torch.ones((len(black_area_num_t), masks.shape[1], self.height, self.width)).to(img.device)
+        
+        return degrade_img, degrade_mask, mean_mask
+        
+    
     def degrade_independent_base_sampling(self, black_area_num_t, img, mean_option=None, mean_area=None):
         """
         Degrade input image with single mask for base 'sampling'.
@@ -373,7 +398,7 @@ class Scheduler:
         Returns:
         
         """
-        masks = torch.ones((len(black_area_num_t), self.height*self.width)).to(img.device)
+        masks   = torch.ones((len(black_area_num_t), self.height*self.width)).to(img.device)
         
         for i, num in enumerate(black_area_num_t):
             masks[i, torch.randperm(self.height*self.width)[:num]] = 0.0
