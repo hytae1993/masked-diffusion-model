@@ -275,7 +275,7 @@ def main(dirs: dict, args: dict):
     logger  = get_logger(__name__, log_level="INFO")
     get_log(args, logger, dataset, total_batch_size, max_train_steps)
     
-    if args.use_wandb:
+    if args.use_wandb or args.use_mlflow:
         if accelerator.is_main_process:
             visualizer  = Visualizer(args)
         else:
@@ -314,6 +314,7 @@ if __name__ == '__main__':
     # input to the [dirutilis]
     # ======================================================================
     parser.add_argument('--use_wandb', type=eval, default=True, choices=[True, False])
+    parser.add_argument('--use_mlflow', type=eval, default=True, choices=[True, False])
     parser.add_argument('--task', help='name of the task', type=str, choices=['train', 'sample', 'dataset'], default='train')
     parser.add_argument('--content', help='name of the content', type=str, default='test_code')
     parser.add_argument('--dir_work', help='path to the working directory', type=str, default='./')
@@ -354,7 +355,7 @@ if __name__ == '__main__':
     parser.add_argument("--ddpm_schedule_base", type=float, default=10.0)
     parser.add_argument('--scheduler_num_scale_timesteps', type=int, default=1, help='1/2^n, 1/2^{n-1}, ..., 1/2^0 -> 1 use every timesteps')
     parser.add_argument("--sampling", type=str, default="base")
-    parser.add_argument("--sampling_mask_dependency", help='dependcy of degradation mask between t', type=str, default="independent", choices=['dependent', 'independent'])
+    parser.add_argument("--sampling_mask_dependency", help='dependcy of degradation mask between t', type=str, default="independent", choices=['dependent', 'independent', 'dependent_in_t'])
     parser.add_argument('--mean_option', default=0)
     parser.add_argument('--mean_area', default='image-wise',choices=['channel-wise', 'image-wise'])
     parser.add_argument('--mean_value_accumulate', type=eval, default=False, choices=[True, False])

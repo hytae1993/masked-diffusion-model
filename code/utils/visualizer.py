@@ -6,11 +6,11 @@ import time
 from . import util
 from subprocess import Popen, PIPE
 from time import strptime
+from PIL import Image
+import mlflow
+import wandb
+# from torch.utils.tensorboard import SummaryWriter
 
-try:
-    import wandb
-except ImportError:
-    print('Warning: wandb package cannot be found. The option "--use_wandb" will result in error.')
 
 def save_images(webpage, visuals, image_path, aspect_ratio=1.0, width=256, use_wandb=False):
     """Save images to the disk.
@@ -66,14 +66,30 @@ class Visualizer():
         self.name = args.method
         self.saved = False
         self.use_wandb = args.use_wandb
-        # self.wandb_project_name = args.wandb_project_name
-        self.wandb_project_name = "diffusion"
+        self.use_mlflow = args.use_mlflow
+        # self.use_tensorboard = args.use_tensorboard
+        self.project_name = "diffusion"
+        name = self.name + "_" + args.title
         self.current_epoch = 0
-
+        
         if self.use_wandb:
-            name = self.name + "_" + args.title
-            self.wandb_run = wandb.init(project=self.wandb_project_name, name=name, config=args) if not wandb.run else wandb.run
+            
+            self.wandb_run = wandb.init(project=self.project_name, name=name, config=args) if not wandb.run else wandb.run
             self.wandb_run._label(repo='Mask-Diffusion')
+            
+        if self.use_mlflow:
+            mlflow.set_tracking_uri("http://165.194.34.47:7789")
+            try:
+                mlflow.create_experiment(self.project_name)
+                mlflow.set_experiment(self.project_name)
+            except mlflow.exceptions.RestException:
+                mlflow.set_experiment(self.project_name)
+            
+            mlflow.set_tag('mlflow.runName', name)
+            
+        # if self.use_tensorboard:
+        #     writer = SummaryWriter()
+
             
         self.visual_names   = None
         self.loss_names     = None
@@ -93,19 +109,72 @@ class Visualizer():
         if self.use_wandb:
             columns = [key for key, _ in visuals.items()]
             columns.insert(0, 'epoch')
-            result_table = wandb.Table(columns=columns)
-            table_row = [epoch]
             ims_dict = {}
             for label, image in visuals.items():
-                image_numpy = util.tensor2im(image)
-                wandb_image = wandb.Image(image_numpy)
-                table_row.append(wandb_image)
+                if type(image) == list:
+                    wandb_image = []
+                    for i in range(len(image)):
+                        wandb_image.append(wandb.Image(image[i]))
+                else:
+                    wandb_image = wandb.Image(image)
+                    
                 ims_dict[label] = wandb_image
-            self.wandb_run.log(ims_dict)
+                self.wandb_run.log(ims_dict)
+                
             if epoch != self.current_epoch:
                 self.current_epoch = epoch
-                result_table.add_data(*table_row)
-                self.wandb_run.log({"Result": result_table})
+                
+        if self.use_mlflow:
+            columns = [key for key, _ in visuals.items()]
+            columns.insert(0, 'epoch')
+            ims_dict = {}
+            for label, image in visuals.items():
+                if type(image) == list:
+                    wandb_image = []
+                    for i in range(len(image)):
+                        image_numpy = util.tensor2im(image[i])
+                        # wandb_image.append(wandb.Image(image_numpy))
+                        # wandb_image.append(wandb.Image(image[i]))
+                else:
+                    image_numpy = util.tensor2im(image)
+                    # wandb_image = wandb.Image(image_numpy)
+                    # wandb_image = wandb.Image(image)
+                    
+                    # table_row.append(wandb_image)
+                ims_dict[label] = image_numpy
+                mlflow.log_image(image_numpy, label + ".png")
+                
+                
+            if epoch != self.current_epoch:
+                self.current_epoch = epoch
+                # result_table.add_data(*table_row)
+                # self.wandb_run.log({"Result": result_table})
+                
+        # if self.use_tensorboard:
+        #     columns = [key for key, _ in visuals.items()]
+        #     columns.insert(0, 'epoch')
+        #     ims_dict = {}
+        #     for label, image in visuals.items():
+        #         if type(image) == list:
+        #             wandb_image = []
+        #             for i in range(len(image)):
+        #                 image_numpy = util.tensor2im(image[i])
+        #                 # wandb_image.append(wandb.Image(image_numpy))
+        #                 # wandb_image.append(wandb.Image(image[i]))
+        #         else:
+        #             image_numpy = util.tensor2im(image)
+        #             # wandb_image = wandb.Image(image_numpy)
+        #             # wandb_image = wandb.Image(image)
+                    
+        #             # table_row.append(wandb_image)
+        #         ims_dict[label] = image_numpy
+        #         mlflow.log_image(image_numpy, label + ".png")
+                
+                
+        #     if epoch != self.current_epoch:
+        #         self.current_epoch = epoch
+        #         # result_table.add_data(*table_row)
+        #         # self.wandb_run.log({"Result": result_table})
 
 
     def plot_current_losses(self, epoch, losses):
