@@ -7,6 +7,8 @@ import math
 import random
 from typing import Sequence
 
+import matplotlib.pyplot as plt
+
 
 class Scheduler:
     def __init__(self, args):
@@ -51,6 +53,7 @@ class Scheduler:
         
         ddpm_num_steps          = len(black_area_num_pixel)
         self.ratio_list         = torch.tensor(black_area_num_pixel / self.image_size)
+        self.reverse_ratio      = torch.flip(self.ratio_list, dims=(0,))
         self.black_area_pixels  = black_area_num_pixel        
         self.updated_ddpm_num_steps = ddpm_num_steps
         
@@ -65,6 +68,16 @@ class Scheduler:
     def get_updated_ddpm_num_steps(self):
         
         return self.updated_ddpm_num_steps
+    
+    
+    def get_ratio_list(self):
+        
+        return self.ratio_list
+    
+    
+    def get_reverse_ratio_list(self):
+        
+        return self.reverse_ratio
     
     
     def get_black_area_num_pixels_time(self, time):
@@ -100,14 +113,14 @@ class Scheduler:
         if ddpm_num_steps > len(time_list):
             raise ValueError("Desired to remove number of pixels is greater than the size of input image.")
 
-        base    = self.args.ddpm_schedule_base # default 10.0
-        values = [int(base**i) for i in np.linspace(0, np.log(self.image_size), ddpm_num_steps)]
-    
-        # Scale values to fit within [1, self.image_size]
-        scaled_values = [1 + int((self.image_size - 1) * (x - min(values)) / (max(values) - min(values))) for x in values]
+        x       = np.linspace(1, self.image_size, self.args.ddpm_num_steps)
+        values  = np.log(x)
         
-        # Ensure uniqueness and remove duplicates
-        unique_values = list(sorted(set(scaled_values)))
+        values  = values - min(values) + 1
+        values  = values * (self.image_size / max(values))
+        values  = np.asarray(values, dtype=int)
+    
+        unique_values = list(sorted(set(values)))
         
         black_area_num_pixel    = np.array(unique_values)
         
@@ -282,13 +295,14 @@ class Scheduler:
                     sum_pixel   = (img * (1-masks)).sum(dim=(1,2,3), keepdim=True)
                     mean_pixel  = sum_pixel / (1-masks).sum(dim=(1,2,3), keepdim=True)
                     
+                    
                 elif mean_area == 'channel-wise':
                     sum_pixel   = (img * (1-masks)).sum(dim=(2,3), keepdim=True)
                     mean_pixel  = sum_pixel / (1-masks).sum(dim=(2,3), keepdim=True)
                 
                 
             elif mean_option == 'non_degraded_area':    # calculate with non-degraded area
-                sum_pixel   = (img * masks).sum(dim=(1,2,3), keepdim=True)
+                sum_pixel   = (img * masks).sum(dim=(2,3), keepdim=True)
                 mean_pixel  = sum_pixel / (1-masks).sum(dim=(2,3), keepdim=True) * -1
                 mean_pixel[torch.isnan(mean_pixel)] = 0.0
 
@@ -472,10 +486,11 @@ class Scheduler:
     
     
     def get_schedule_shift_time(self, timesteps: torch.IntTensor) -> torch.FloatTensor:
-        random      = torch.FloatTensor(len(timesteps)).uniform_(-5.0, +5.0)
+        random      = torch.FloatTensor(len(timesteps)).uniform_(-1.0, +1.0)
         random      = random.to(timesteps.device)
         timesteps   = timesteps.int()
         ratio       = torch.index_select(self.ratio_list.to(timesteps.device), 0, timesteps-1)
+        
         shift_time  = random * ratio
         # reverse_ratio   = torch.index_select(torch.flip(self.ratio_list, [0]).to(timesteps.device), 0, timesteps-1)
         # shift_time  = random * reverse_ratio

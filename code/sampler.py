@@ -180,63 +180,6 @@ class Sampler:
         return sample_0, t_list, t_mask_list, sample_list, mean_values, sample_t_shift_list, sample_shift_list
     
     
-    # def _sample_momentum(self, model: Module, timesteps_used_epoch):
-    #     latent              = self._get_latent_initial(model)
-    #     sample_t            = latent.to(model.device)
-    #     sample_list         = sample_t.unsqueeze(dim=1).cpu()
-    #     t_list              = sample_t.unsqueeze(dim=1).cpu()
-    #     degrade_mask_list   = sample_t.unsqueeze(dim=1).cpu()
-    #     mean_mask_list      = sample_t.unsqueeze(dim=1).cpu()
-    #     mask_list           = sample_t.unsqueeze(dim=1).cpu()
-        
-    #     with torch.no_grad():
-    #         sample_progress_bar = tqdm(total=len(timesteps_used_epoch), leave=False)
-    #         sample_progress_bar.set_description(f"Sampling(momentum sampling)")
-            
-    #         if self.args.sampling_mask_dependency == 'independent':
-    #             index_list  = None
-    #         elif self.args.sampling_mask_dependency == 'dependent':
-    #             # make random list: list sie = [sample_num, img_size]
-    #             index_list = torch.stack([torch.randperm(self.args.data_size * self.args.data_size) for _ in range(self.args.sample_num)]).to(model.device)
-                
-    #         index_start = 0
-    #         mean_values = []
-    #         for i in range(len(timesteps_used_epoch)-1, -1, -1):
-    #             t       = timesteps_used_epoch[i]
-    #             time    = torch.Tensor([t])
-    #             time    = time.expand(self.args.sample_num).to(model.device)
-                
-    #             mask            = model(sample_t, time).sample
-    #             sample_0        = sample_t + mask # x`_0
-                
-    #             sample_list     = torch.cat((sample_list, sample_0.unsqueeze(dim=1).cpu()), dim=1)
-    #             mask_list       = torch.cat((mask_list, mask.unsqueeze(dim=1).cpu()), dim=1)
-    #             if i > 0:
-    #                 next_t                      = time - 1
-    #                 black_area_num_t            = self.Scheduler.get_black_area_num_pixels_time(time)
-    #                 black_area_num_next_t       = self.Scheduler.get_black_area_num_pixels_time(next_t)
-    #                 black_area_num_difference   = black_area_num_t - black_area_num_next_t
-                    
-    #                 if self.args.sampling_mask_dependency == 'independent':
-    #                     degraded_difference, difference_mask    = self.Scheduler.degrade_independent_sampling(black_area_num_difference, sample_0, mean_option=self.args.mean_option)
-    #                 elif self.args.sampling_mask_dependency == 'dependent':
-    #                     index_end   = index_start+black_area_num_difference[0]
-    #                     sample_t, difference_mask, mean_value    = self.Scheduler.degrade_dependent_momentum_sampling(sample_t, sample_0, mean_option=self.args.mean_option, index_start=index_start, index_end=index_end, index_list=index_list)
-    #                     index_start = index_end
-                    
-    #                 difference_mask = difference_mask.expand_as(sample_0)
-    #                 t_mask_list  = torch.cat((t_mask_list, difference_mask.unsqueeze(dim=1).cpu()), dim=1)
-                    
-    #                 # sample_t    = sample_t + degraded_difference
-    #                 t_list      = torch.cat((t_list, sample_t.unsqueeze(dim=1).cpu()), dim=1)
-                    
-    #                 mean_values.append(mean_value.mean().cpu())
-                    
-    #             sample_progress_bar.update(1)
-    #     sample_progress_bar.close()
-        
-    #     return sample_0, t_list, t_mask_list, sample_list, mean_values
-    
     
     def _sample_momentum(self, model: Module, timesteps_used_epoch):
         latent                      = self._get_latent_initial(model)
@@ -293,7 +236,10 @@ class Sampler:
                         degraded_next_t, degrade_mask_next_t, mean_mask_next_t  = self.Scheduler.degrade_index_sampling(new_index_list, black_area_num_next_t, sample_0, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
                         
                     difference      = degraded_next_t - degraded_t
-                    sample_t        = sample_t + difference
+                    # sample_t        = sample_t + difference
+                    
+                    ratio           = self.Scheduler.get_reverse_ratio_list()[i]
+                    sample_t        = torch.sqrt(ratio) * sample_t + torch.sqrt(1-ratio) * difference
                     
                     degrade_mask_t_list[len(timesteps_used_epoch) - i]    = degrade_mask_t
                     degrade_mask_next_t_list[len(timesteps_used_epoch) - i]    = degrade_mask_next_t
@@ -303,7 +249,6 @@ class Sampler:
                     mean_mask_t_list[len(timesteps_used_epoch) - i]    = mean_mask_t
                     mean_mask_next_t_list[len(timesteps_used_epoch) - i]    = mean_mask_next_t
                     sample_t_list[len(timesteps_used_epoch) - i]    = sample_t
-                    
                     
                 sample_progress_bar.update(1)
         sample_progress_bar.close()
@@ -363,165 +308,6 @@ class Sampler:
         return sample_0
     
         
-    def sample_all_t(self, model: Module):
-        '''
-        Generate the sampling result using all t include not used for training
-        ex) t -> 0 -> t-1 -> 0 -> t-2 -> ... -> 1 -> 0
-        '''
-        if self.args.method == 'base':
-            pass
-        elif self.args.method == 'mean_shift':
-            sample_list = self._sample_all_mean_shift_t(model)
-        
-        return sample_list
-    
-    
-    def _sample_all_t(self, img: torch.Tensor, model: Module):
-        sample_list = [img]
-        time_length = self.args.updated_ddpm_num_steps
-        
-        with torch.no_grad():
-            sample_all_t_progress_bar    = tqdm(total=time_length, leave=False)
-            sample_all_t_progress_bar.set_description(f"Sampling random t")
-            for sampleTime in range(1, time_length+1):
-                
-                t_noisy = self._get_noisy(sampleTime, img, model)
-                
-                for time in range(sampleTime, 0, -1):
-                    time                = torch.Tensor([time])
-                    
-                    mask                = model(t_noisy, time.to(model.device)).sample
-                    prediction          = mask + t_noisy
-                    
-                    if time == 1:
-                        sample  = prediction
-                        sample_list.append(sample)
-                    
-                    else:
-                        t_noisy = self._get_noisy(sampleTime-1, prediction, model)
-
-                sample_all_t_progress_bar.update(1)
-        sample_all_t_progress_bar.close()
-            
-        return sample_list
-    
-    
-    def _sample_all_mean_shift_t(self, model: Module):
-        time_length = self.args.updated_ddpm_num_steps
-      
-        latent      = self._get_latent_initial(model)
-        sample      = latent.to(model.device)
-        
-        # sample_list = [sample[0].unsqueeze(dim=0)]
-        # sample_list = [sample]
-        sample_list = sample.unsqueeze(dim=1)
-        
-        with torch.no_grad():
-            sample_all_t_progress_bar   = tqdm(total=time_length, leave=False)
-            sample_all_t_progress_bar.set_description(f"Sampling all t")
-            for t in range(time_length, 0, -1): # t = time_length, time_length-1, ..., 2, 1
-                time                = torch.Tensor([t])
-                time                = time.expand(self.args.batch_size).to(model.device)
-                
-                shift               = self.Scheduler.get_schedule_shift_time(time)
-                sample              = self.Scheduler.perturb_shift(sample, shift)
-                
-                mask                = model(sample, time).sample
-                prediction          = sample + mask
-                # prediction          = self.Scheduler.perturb_shift_inverse(prediction, shift)
-                prediction          = self._shift_mean(prediction)
-                # sample_list.append(prediction[0].unsqueeze(dim=0))
-                # sample_list.append(prediction)
-                sample_list         = torch.cat((sample_list, prediction.unsqueeze(dim=1)), dim=1)
-        
-                if t == 1:
-                    sample  = prediction
-                    # sample_list.append(sample[0].unsqueeze(dim=0))
-                    # sample_list.append(sample)
-                    sample_list         = torch.cat((sample_list, prediction.unsqueeze(dim=1)), dim=1)
-                else:
-                    black_area_num      = self.Scheduler.get_black_area_num_pixels_time(time-1)
-                    noisy_img, noise    = self.Scheduler.get_mean_mask(black_area_num, prediction)
-                    sample              = noisy_img
-                    
-                sample_all_t_progress_bar.update(1)
-            sample_all_t_progress_bar.close()
-
-        return sample, sample_list
-    
-    
-    def result_each_t(self, img: torch.Tensor, model: Module):
-        '''
-        Generate first output from all time t
-        ex) T -> 0, T-1 -> 0, T-2 -> 0, ... , 1 -> 0
-        '''
-        if self.args.method == 'base':
-            pass
-        elif self.args.method == 'shift':
-            noisy_list, mask_list, sample_list = self._each_result_shift_t(img[0], model)
-        elif self.args.method == 'mean_shift':
-            noisy_list, mask_list, sample_list = self._each_result_mean_shift_t(img[0], model)
-        
-        return noisy_list, mask_list, sample_list
-    
-    
-    def _each_result_mean_shift_t(self, img: torch.Tensor, model: Module):
-        sample_list = []
-        noise_list  = []
-        noisy_list  = []
-        mask_list   = []
-        
-        time_length = self.args.updated_ddpm_num_steps
-        
-        img = img.unsqueeze(dim=0)
-        with torch.no_grad():
-            each_result_t_progress_bar    = tqdm(total=time_length, leave=False)
-            each_result_t_progress_bar.set_description(f"each first result of t")
-            for sampleTime in range(1, time_length+1):
-                
-                shift   = self.Scheduler.get_schedule_shift_time(torch.tensor([sampleTime]))
-                t_noisy = self._get_noisy_shift(sampleTime, img, shift, model)
-                               
-                time                = torch.Tensor([sampleTime])
-                shift_time          = self.Scheduler.get_schedule_shift_time(time)
-                
-                mask                = model(t_noisy, time.to(model.device)).sample
-                prediction          = mask + t_noisy
-                prediction          = self.Scheduler.perturb_shift_inverse(prediction, shift_time)
-                
-                noisy_list.append(t_noisy)
-                mask_list.append(mask)
-                sample_list.append(prediction)
-
-                each_result_t_progress_bar.update(1)
-        each_result_t_progress_bar.close()
-            
-        return noisy_list, mask_list, sample_list
-    
-    
-    def _get_noisy(self, time: int, img: torch.Tensor, model: Module):
-        time                = torch.tensor([time])
-        # time                = torch.Tensor(time, device=model.device)
-                
-        black_area_num      = self.Scheduler.get_black_area_num_pixels_time(time)
-        noise               = self.Scheduler.get_mask(black_area_num)
-        noise               = noise.to(model.device)
-        sample              = img * noise
-        
-        return sample
-
-
-    def _get_noisy_shift(self, time: int, img: torch.Tensor, shift: torch.Tensor, model: Module):
-        time                = torch.tensor([time])
-        # time                = torch.Tensor(time, device=model.device)
-                
-        black_area_num      = self.Scheduler.get_black_area_num_pixels_time(time)
-        noisy_img, noise    = self.Scheduler.get_mean_mask(black_area_num, img)
-        sample_shift        = self.Scheduler.perturb_shift(noisy_img, shift)
-        
-        return sample_shift
-
-
     def _save_image_grid(self, sample: torch.Tensor, normalization='global', dir_save=None, file_sample=None):
         batch_size  = sample.shape[0]
         nrow        = int(np.ceil(np.sqrt(batch_size)))
@@ -635,46 +421,44 @@ class Sampler:
         file_save   = os.path.join(dir_save, file_save)
         save_image(grid_data, file_save)
 
-
-    def _shift_mean(self, img: torch.Tensor):
-        mean    = img.mean(dim=(1,2,3), keepdim=True)
-        img     = img - mean
+    
+    def get_nearest_neighbor(self, source: torch.Tensor, augment: bool=False, metric: str='cosine'):
+        batch_size  = source.shape[0]
+        score       = torch.Tensor()
+        score       = score.to(source.device)
+        dataloader  = DataLoader(self.dataset, batch_size=batch_size, drop_last=False, shuffle=False)
+        transform   = transforms.Compose([transforms.RandomHorizontalFlip()]) 
+        transform_resize    = transforms.Compose([transforms.Resize([32, 32])]) 
+        source_small        = transform_resize(source)
         
-        return img
+        for i, (data, label) in enumerate(dataloader):
+            data = normalize01(data)
+            data = data.to(source.device)
+            data_small = transform_resize(data)
+            sim = self._compute_similarity(source_small, data_small, metric)
+            sim = sim.to(source.device)
+
+            if augment:
+                data_aug = transform(data)
+                data_aug_small = transform_resize(data_aug)
+                sim_aug = self._compute_similarity(source_small, data_aug_small, metric)
+                sim_aug = sim_aug.to(source.device)
+                sim = torch.max(sim, sim_aug) 
+            
+            score = torch.cat((score, sim), dim=0)
+
+        max_val, max_idx = score.max(dim=0)
+        nearest_neighbor = torch.zeros_like(source) 
+
+        for i in range(len(max_idx)):
+            nearest = self.dataset[max_idx[i]][0]
+            nearest_neighbor[i] = nearest
+        return nearest_neighbor
     
     
-    def tempt(self,
-        model,
-        batch_size: int=0,
-    ):
-        if batch_size == 0:
-            batch_size = self.batch_size
-      
-        model   = model.to(self.accelerator.device)
-        # sample0  = torch.zeros((batch_size, self.dim_channel, self.dim_height, self.dim_width), dtype=(torch.float32 if self.accelerator.mixed_precision == "no" else torch.float16)) 
-        sample0 = torch.zeros(batch_size, self.dim_channel, self.dim_height, self.dim_width)
-        sample0 = sample0.to(self.accelerator.device)
-        num_timesteps = len(self.degrade_scheduler)
-        sample_time = torch.zeros(num_timesteps, self.dim_channel, self.dim_height, self.dim_width)
-         
-        with torch.no_grad():
-            for t in range(num_timesteps-1, -1, -1): # t = (num_timesteps-1, ..., 2, 1, 0)
-                time    = torch.Tensor([t]).long()
-                time    = time.to(self.accelerator.device)
-                time    = time.repeat(batch_size)
-
-                sample, shift, scale = self.degrade_scheduler.perturb(sample0, time)
-                pred    = model(sample, time).sample
-                sample  = sample + pred
-                sample  = self.degrade_scheduler.perturb_inverse(sample, shift, scale)
-
-                sample_time[t] = sample[0]
-
-                if t > 0:
-                    if self.sample_momentum_use:
-                        sample0 = sample0 + self.degrade_scheduler.degrade(sample, time-1) - self.degrade_scheduler.degrade(sample, time)
-                    else:
-                        sample0 = self.degrade_scheduler.degrade(sample, time-1)
-                    
-        return sample, sample_time
-        
+    def _compute_similarity(self, source: torch.Tensor, target: torch.Tensor, metric: str='cosine'):
+            vec_source = nn.Flatten()(source)
+            vec_target = nn.Flatten()(target)
+            if metric.lower() == 'cosine':
+                score = nn.functional.cosine_similarity(vec_source[None,:,:], vec_target[:,None,:], dim=2) 
+            return score
