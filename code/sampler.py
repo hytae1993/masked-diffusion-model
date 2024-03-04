@@ -71,11 +71,11 @@ class Sampler:
     def _sample(self, model: Module, timesteps_used_epoch):
         latent              = self._get_latent_initial(model)
         sample_t            = latent.to(model.device)
-        sample_list         = sample_t.unsqueeze(dim=1).cpu()
-        t_list              = sample_t.unsqueeze(dim=1).cpu()
-        degrade_mask_list   = sample_t.unsqueeze(dim=1).cpu()
-        mean_mask_list      = sample_t.unsqueeze(dim=1).cpu()
-        mask_list           = sample_t.unsqueeze(dim=1).cpu()
+        sample_list         = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
+        t_list              = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
+        degrade_mask_list   = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
+        mean_mask_list      = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
+        mask_list           = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
         
         with torch.no_grad():
             sample_progress_bar = tqdm(total=len(timesteps_used_epoch), leave=False)
@@ -87,9 +87,6 @@ class Sampler:
                 # index_list  = torch.randperm(len(timesteps_used_epoch), dtype=torch.int64)
                 index_list = torch.stack([torch.randperm(self.args.data_size * self.args.data_size) for _ in range(self.args.sample_num)]).to(model.device)
                 
-            index_start = 0
-            mean_values = torch.zeros(self.args.sample_num, len(timesteps_used_epoch))
-            
             for i in range(len(timesteps_used_epoch)-1, -1, -1):
                 t       = timesteps_used_epoch[i]
                 time    = torch.Tensor([t])
@@ -98,8 +95,9 @@ class Sampler:
                 mask            = model(sample_t, time).sample
                 sample_0        = sample_t + mask # x`_0
                 
-                mask_list       = torch.cat((mask_list, mask.unsqueeze(dim=1).cpu()), dim=1)
-                sample_list     = torch.cat((sample_list, sample_0.unsqueeze(dim=1).cpu()), dim=1)
+                mask_list[len(timesteps_used_epoch) - i]        = mask
+                sample_list[len(timesteps_used_epoch) - i]      = sample_0
+                
                 if i > 0:
                     black_area_num_t            = self.Scheduler.get_black_area_num_pixels_time(time-1)
                     # white_area_num_t            = self.args.data_size * self.args.data_size - black_area_num_t
@@ -111,10 +109,10 @@ class Sampler:
                     
                     
                     degrade_mask        = degrade_mask.expand_as(sample_0)
-                    mean_mask_list      = torch.cat((mean_mask_list, mean_mask.unsqueeze(dim=1).cpu()), dim=1)
-                    degrade_mask_list   = torch.cat((degrade_mask_list, degrade_mask.unsqueeze(dim=1).cpu()), dim=1)
                     
-                    t_list      = torch.cat((t_list, sample_t.unsqueeze(dim=1).cpu()), dim=1)
+                    mean_mask_list[len(timesteps_used_epoch) - i]       = mean_mask
+                    degrade_mask_list[len(timesteps_used_epoch) - i]    = degrade_mask
+                    t_list[len(timesteps_used_epoch) - i]               = sample_t
                     
             
                 sample_progress_bar.update(1)
@@ -126,11 +124,11 @@ class Sampler:
     def _sample_mean_shift(self, model: Module, timesteps_used_epoch):
         latent              = self._get_latent_initial(model)
         sample_t            = latent.to(model.device)
-        sample_t_shift_list = sample_t.unsqueeze(dim=1).cpu()
-        sample_shift_list   = sample_t.unsqueeze(dim=1).cpu()
-        sample_list         = sample_t.unsqueeze(dim=1).cpu()
-        t_list              = sample_t.unsqueeze(dim=1).cpu()
-        t_mask_list         = sample_t.unsqueeze(dim=1).cpu()
+        sample_t_shift_list = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
+        sample_shift_list   = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
+        sample_list         = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
+        t_list              = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
+        t_mask_list         = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
         
         with torch.no_grad():
             sample_progress_bar = tqdm(total=len(timesteps_used_epoch), leave=False)
@@ -151,26 +149,26 @@ class Sampler:
                 
                 shift                   = self.Scheduler.get_schedule_shift_time(time)
                 sample_t_shift          = self.Scheduler.perturb_shift(sample_t, shift)
-                sample_t_shift_list     = torch.cat((sample_t_shift_list, sample_t_shift.unsqueeze(dim=1).cpu()), dim=1)
+                sample_t_shift_list[len(timesteps_used_epoch) - i]  = sample_t_shift
                 
                 mask                = model(sample_t_shift, time).sample
                 sample_0            = sample_t_shift + mask # x`_0
-                sample_shift_list   = torch.cat((sample_shift_list, sample_0.unsqueeze(dim=1).cpu()), dim=1)
+                sample_shift_list[len(timesteps_used_epoch) - i]  = sample_0
                 sample_0            = self.Scheduler.perturb_shift_inverse(sample_0, shift)
-                sample_list         = torch.cat((sample_list, sample_0.unsqueeze(dim=1).cpu()), dim=1)
+                sample_list[len(timesteps_used_epoch) - i]  = sample_0
                 if i > 0:
                     black_area_num_t            = self.Scheduler.get_black_area_num_pixels_time(time-1)
                     # white_area_num_t            = self.args.data_size * self.args.data_size - black_area_num_t
                     
                     if self.args.sampling_mask_dependency == 'independent':
-                        sample_t, degrade_mask, mean_value    = self.Scheduler.degrade_independent_base_sampling(black_area_num_t, sample_0, mean_option=self.args.mean_option)
+                        sample_t, degrade_mask, mean_value    = self.Scheduler.degrade_independent_base_sampling(black_area_num_t, sample_0, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
                     elif self.args.sampling_mask_dependency == 'dependent':
                         sample_t, degrade_mask, mean_value    = self.Scheduler.degrade_dependent_base_sampling(sample_0, mean_option=self.args.mean_option, black_area_num=black_area_num_t[0], index_list=index_list)
                     
                     degrade_mask = degrade_mask.expand_as(sample_0)
-                    t_mask_list  = torch.cat((t_mask_list, degrade_mask.unsqueeze(dim=1).cpu()), dim=1)
                     
-                    t_list      = torch.cat((t_list, sample_t.unsqueeze(dim=1).cpu()), dim=1)
+                    t_mask_list[len(timesteps_used_epoch) - i]  = degrade_mask
+                    t_list[len(timesteps_used_epoch) - i]       = sample_t
                     
                     mean_values[:, len(timesteps_used_epoch)-i-1] = mean_value.mean(dim=(1,2,3))
                     
@@ -238,8 +236,9 @@ class Sampler:
                     difference      = degraded_next_t - degraded_t
                     # sample_t        = sample_t + difference
                     
-                    ratio           = self.Scheduler.get_reverse_ratio_list()[i]
-                    sample_t        = torch.sqrt(ratio) * sample_t + torch.sqrt(1-ratio) * difference
+                    # # ratio           = self.Scheduler.get_reverse_ratio_list()[i] # from 0 to 1
+                    # ratio           = self.Scheduler.get_ratio_list()[i] # from 1 to 0
+                    # sample_t        = sample_t + ratio * difference
                     
                     degrade_mask_t_list[len(timesteps_used_epoch) - i]    = degrade_mask_t
                     degrade_mask_next_t_list[len(timesteps_used_epoch) - i]    = degrade_mask_next_t
