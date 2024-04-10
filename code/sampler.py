@@ -65,7 +65,14 @@ class Sampler:
                 return sample_0, sample_t_list, sample_0_list, network_output_t_list, degrade_mask_t_list, degrade_mask_next_t_list, degrade_t_list, degrade_next_t_list, difference_list, mean_mask_t_list, mean_mask_next_t_list
             elif self.args.method == 'mean_shift':
                 sample  = self._sample_mean_shift_momentum(model, timesteps_used_epoch)
-                return sample
+                return sample 
+            elif self.args.method == 'test':
+                sample_0, sample_t_list, sample_0_list, network_output_t_list, degrade_mask_t_list, degrade_mask_next_t_list, degrade_t_list, degrade_next_t_list, difference_list, mean_mask_t_list, mean_mask_next_t_list = self._sample_momentum(model, timesteps_used_epoch)
+                return sample_0, sample_t_list, sample_0_list, network_output_t_list, degrade_mask_t_list, degrade_mask_next_t_list, degrade_t_list, degrade_next_t_list, difference_list, mean_mask_t_list, mean_mask_next_t_list
+            
+    
+    def test_sample(self, model: Module):
+        pass
                 
         
     def _sample(self, model: Module, timesteps_used_epoch):
@@ -215,6 +222,7 @@ class Sampler:
                 sample_0_list[len(timesteps_used_epoch) - i]    = sample_0
                 network_output_t_list[len(timesteps_used_epoch) - i]    = mask
                 
+                # if i > 0 and i < (len(timesteps_used_epoch) - 1):
                 if i > 0:
                     next_t                      = time - 1
                     black_area_num_t            = self.Scheduler.get_black_area_num_pixels_time(time)
@@ -234,7 +242,8 @@ class Sampler:
                         degraded_next_t, degrade_mask_next_t, mean_mask_next_t  = self.Scheduler.degrade_index_sampling(new_index_list, black_area_num_next_t, sample_0, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
                         
                     difference      = degraded_next_t - degraded_t
-                    # sample_t        = sample_t + difference
+                    # sample_t        = sample_t + 0.5 * difference
+                    sample_t        = sample_t + difference
                     
                     # # ratio           = self.Scheduler.get_reverse_ratio_list()[i] # from 0 to 1
                     # ratio           = self.Scheduler.get_ratio_list()[i] # from 1 to 0
@@ -253,7 +262,7 @@ class Sampler:
         sample_progress_bar.close()
     
         return sample_0, sample_t_list, sample_0_list, network_output_t_list, degrade_mask_t_list, degrade_mask_next_t_list, degrade_t_list, degrade_next_t_list, difference_list, mean_mask_t_list, mean_mask_next_t_list
-    
+     
     
     def _sample_mean_shift_momentum(self, model: Module, timesteps_used_epoch):
         latent                      = self._get_latent_initial(model)
@@ -315,11 +324,15 @@ class Sampler:
         elif normalization == 'image':
             sample      = normalize01(sample)
             
-        grid_sample = make_grid(sample, nrow=nrow, normalize=False, scale_each=False)
+        try:
+            grid_sample = make_grid(sample, nrow=nrow, normalize=False, scale_each=False)
+            
+            if dir_save is not None and file_sample is not None:
+                file_sample = os.path.join(dir_save, file_sample)
+                save_image(grid_sample, file_sample)
         
-        if dir_save is not None and file_sample is not None:
-            file_sample = os.path.join(dir_save, file_sample)
-            save_image(grid_sample, file_sample)
+        except ZeroDivisionError:
+            grid_sample = None
         
         return grid_sample
     
