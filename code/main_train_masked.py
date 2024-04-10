@@ -31,10 +31,10 @@ from diffusers.training_utils import EMAModel
 from utils.visualizer import Visualizer
 
 from trainer_masked import Trainer as BaseTrainer
-from trainer_masked_shift import Trainer as ShiftTrainer
 from trainer_masked_mean_shift import Trainer as MeanShiftTrainer
-from trainer_test_template import Trainer as TestTrainer
+from tester import Tester as Tester
 
+import utils.model as models
 import utils.datasetutils as datasetutils
 import utils.datasetutilsHugging as datasetHugging
 import utils.dirutils as dirutils
@@ -67,17 +67,10 @@ def get_dataloader(dataset: Dataset, batch_size: int, num_workers: int):
     
         
 def get_model(args: dict):
+    
     if args.model == 'default':
-        model   = UNet2DModel(
-            sample_size=args.data_size,
-            in_channels=args.in_channel,
-            out_channels=args.out_channel,
-            layers_per_block=2,
-            block_out_channels=(128, 128, 256, 256, 512, 512),
-            down_block_types=("DownBlock2D", "DownBlock2D", "DownBlock2D", "DownBlock2D", "AttnDownBlock2D", "DownBlock2D"),
-            up_block_types=("UpBlock2D", "AttnUpBlock2D", "UpBlock2D", "UpBlock2D", "UpBlock2D", "UpBlock2D")
-,
-        )
+        model   = models.MyModel(dim_channel=args.in_channel, dim_height=args.data_size, dim_width=args.data_size, num_attention=args.num_attention)
+
     else:
         config  = UNet2DModel.load_config(args.model)
         model   = UNet2DModel.from_config(config)
@@ -218,7 +211,7 @@ def get_log(args, logger, dataset, total_batch_size, max_train_setps):
     logger.info(f"  Total optimization steps = {max_train_setps}")
     
 
-def resume_train(args, accelerator, num_update_steps_per_epoch):
+def resume_train(args, accelerator, num_update_steps_per_epoch, dirs):
     global_step, first_epoch    = 0, 0
     
     if args.resume_from_checkpoint != "latest":
@@ -229,7 +222,7 @@ def resume_train(args, accelerator, num_update_steps_per_epoch):
         dirs    = [d for d in dirs if d.startswith("checkpoint")]
         dirs    = sorted(dirs, key=lambda x: int(x.split("-")[1]))
         path    = dirs[-1] if len(dirs) > 0 else None
-
+        
     if path is None:
         accelerator.print(
             f"Checkpoint '{args.resume_from_checkpoint}' does not exist. Starting a new training run."
@@ -237,15 +230,20 @@ def resume_train(args, accelerator, num_update_steps_per_epoch):
         args.resume_from_checkpoint = None
     else:
         accelerator.print(f"Resuming from checkpoint {path}")
-        accelerator.load_state(os.path.join(args.output_dir, path))
-        global_step = int(path.split("-")[1])
+        # accelerator.load_state(os.path.join(dirs.list_dir['checkpoint']))
+        global_step = int(path.split("-")[-1])
 
         resume_global_step  = global_step * args.gradient_accumulation_steps
         first_epoch         = global_step // num_update_steps_per_epoch
         resume_step         = resume_global_step % (num_update_steps_per_epoch * args.gradient_accumulation_steps)
-    
-    return global_step, first_epoch, resume_step
+        
+    return global_step, first_epoch, resume_step 
 
+
+def load_test_model(args, accelerator):
+    path    = args.test_model_path
+    accelerator.load_state(os.path.join(path))
+    
     
 def main(dirs: dict, args: dict):
     
@@ -284,18 +282,18 @@ def main(dirs: dict, args: dict):
         visualizer  = None
     
     if args.resume_from_checkpoint != 'False':
-        global_step, first_epoch, resume_step   = resume_train(args, accelerator, num_update_steps_per_epoch)
+        if args.method.lower() != 'test':
+            global_step, first_epoch, resume_step   = resume_train(args, accelerator, num_update_steps_per_epoch, dirs)
     else:
-        global_step, first_epoch, resume_step  = 0, 0, 0
+        global_step, first_epoch, resume_step   = 0, 0, 0
         
     if args.method.lower()  == 'base':
-        trainer = BaseTrainer(args, dataloader, model, ema_model, optimizer, lr_scheduler, accelerator)
-    elif args.method.lower() == 'shift':
-        trainer = ShiftTrainer(args, dataloader, model, ema_model, optimizer, lr_scheduler, accelerator)
+        trainer = BaseTrainer(args, dataloader, dataset, model, ema_model, optimizer, lr_scheduler, accelerator)
     elif args.method.lower() == 'mean_shift':
-        trainer = MeanShiftTrainer(args, dataloader, model, ema_model, optimizer, lr_scheduler, accelerator)
+        trainer = MeanShiftTrainer(args, dataloader, dataset, model, ema_model, optimizer, lr_scheduler, accelerator)
     elif args.method.lower() == 'test':
-        trainer = TestTrainer(args, dataloader, model, ema_model, optimizer, lr_scheduler, accelerator)
+        load_test_model(args, accelerator)
+        trainer = Tester(args, dataloader, dataset, model, ema_model, optimizer, lr_scheduler, accelerator)
         
     trainer.train(first_epoch, args.num_epochs, resume_step, global_step, dirs, visualizer)
  
@@ -333,6 +331,7 @@ if __name__ == '__main__':
     parser.add_argument('--batch_size', help='mini-batch size', type=int, default=128)
     parser.add_argument('--in_channel', help='number of channel of input', type=int, default=3)
     parser.add_argument('--out_channel', help='number of channel of output', type=int, default=3)
+    parser.add_argument('--num_attention', help='number of attention of model', type=int, default=1)
     parser.add_argument('--num_epochs', help='number of epochs', type=int, default=1000)
     parser.add_argument('--optim', help='name of the optimizer', type=str, choices=(['adam', 'adamw', 'sgd']), default='adamw')
     parser.add_argument('--lr', help='learning rate (maximum)', type=float, default=1e-4)
@@ -367,6 +366,8 @@ if __name__ == '__main__':
     parser.add_argument("--checkpointing_steps", type=int, default=500)
     parser.add_argument("--save_images_epochs", type=int, default=10)
     parser.add_argument("--output_dir", type=str, default=None)
+    # ======================================================================
+    parser.add_argument("--test_model_path", type=str, default=None)
     
     args = parser.parse_args()
    
