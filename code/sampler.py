@@ -61,14 +61,14 @@ class Sampler:
                 
         elif self.args.sampling == 'momentum':
             if self.args.method == 'base':
-                sample_0, sample_t_list, sample_0_list, network_output_t_list, degrade_mask_t_list, degrade_mask_next_t_list, degrade_t_list, degrade_next_t_list, difference_list, mean_mask_t_list, mean_mask_next_t_list = self._sample_momentum(model, timesteps_used_epoch)
-                return sample_0, sample_t_list, sample_0_list, network_output_t_list, degrade_mask_t_list, degrade_mask_next_t_list, degrade_t_list, degrade_next_t_list, difference_list, mean_mask_t_list, mean_mask_next_t_list
+                sample_0, sample_t_list, sample_0_list = self._sample_momentum(model, timesteps_used_epoch)
+                return sample_0, sample_t_list, sample_0_list
             elif self.args.method == 'mean_shift':
                 sample  = self._sample_mean_shift_momentum(model, timesteps_used_epoch)
                 return sample 
             elif self.args.method == 'test':
-                sample_0, sample_t_list, sample_0_list, network_output_t_list, degrade_mask_t_list, degrade_mask_next_t_list, degrade_t_list, degrade_next_t_list, difference_list, mean_mask_t_list, mean_mask_next_t_list = self._sample_momentum(model, timesteps_used_epoch)
-                return sample_0, sample_t_list, sample_0_list, network_output_t_list, degrade_mask_t_list, degrade_mask_next_t_list, degrade_t_list, degrade_next_t_list, difference_list, mean_mask_t_list, mean_mask_next_t_list
+                sample_0, sample_t_list, sample_0_list = self._sample_momentum(model, timesteps_used_epoch)
+                return sample_0, sample_t_list, sample_0_list
             
     
     def test_sample(self, model: Module):
@@ -185,25 +185,18 @@ class Sampler:
         return sample_0, t_list, t_mask_list, sample_list, mean_values, sample_t_shift_list, sample_shift_list
     
     
-    
     def _sample_momentum(self, model: Module, timesteps_used_epoch):
         latent                      = self._get_latent_initial(model)
         sample_t                    = latent.to(model.device)
         
         sample_0_list               = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
         sample_t_list               = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
-        degrade_mask_t_list         = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
-        degrade_mask_next_t_list    = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
-        degrade_t_list              = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
-        degrade_next_t_list         = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
-        difference_list             = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
-        mean_mask_t_list            = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
-        mean_mask_next_t_list       = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
-        network_output_t_list       = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
+        
+        momentum        = torch.zeros(self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size).to(model.device)
         
         with torch.no_grad():
             sample_progress_bar = tqdm(total=len(timesteps_used_epoch), leave=False)
-            sample_progress_bar.set_description(f"Sampling(momentum sampling)")
+            sample_progress_bar.set_description(f"Sampling(adaptive momentum sampling)")
             
             if self.args.sampling_mask_dependency == 'independent':
                 index_list  = None
@@ -220,7 +213,6 @@ class Sampler:
                 sample_0        = sample_t + mask # x`_0
                 
                 sample_0_list[len(timesteps_used_epoch) - i]    = sample_0
-                network_output_t_list[len(timesteps_used_epoch) - i]    = mask
                 
                 # if i > 0 and i < (len(timesteps_used_epoch) - 1):
                 if i > 0:
@@ -241,28 +233,29 @@ class Sampler:
                         degraded_t, degrade_mask_t, mean_mask_t                 = self.Scheduler.degrade_index_sampling(new_index_list, black_area_num_t, sample_0, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
                         degraded_next_t, degrade_mask_next_t, mean_mask_next_t  = self.Scheduler.degrade_index_sampling(new_index_list, black_area_num_next_t, sample_0, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
                         
-                    difference      = degraded_next_t - degraded_t
-                    # sample_t        = sample_t + 0.5 * difference
-                    sample_t        = sample_t + difference
+                    difference  = sample_t - degraded_t
+                    if self.args.momentum_adaptive == 'base_momentum':
+                        """
+                        base momenutm sampling: cold diffusion
+                        x_{t-1} = x_t - D(x_0, t) + D(x_0, t-1)
+                        """
+                        sample_t    = degraded_next_t + difference
+                        
+                    elif self.args.momentum_adaptive == 'momentum':
+                        '''
+                        new momentum sampling
+                        '''
+                        momentum    = (1-self.args.adaptive_momentum_rate) * momentum + self.args.adaptive_momentum_rate * difference
+                        sample_t    = momentum + degraded_next_t
+                        
                     
-                    # # ratio           = self.Scheduler.get_reverse_ratio_list()[i] # from 0 to 1
-                    # ratio           = self.Scheduler.get_ratio_list()[i] # from 1 to 0
-                    # sample_t        = sample_t + ratio * difference
-                    
-                    degrade_mask_t_list[len(timesteps_used_epoch) - i]    = degrade_mask_t
-                    degrade_mask_next_t_list[len(timesteps_used_epoch) - i]    = degrade_mask_next_t
-                    degrade_t_list[len(timesteps_used_epoch) - i]    = degraded_t
-                    degrade_next_t_list[len(timesteps_used_epoch) - i]    = degraded_next_t
-                    difference_list[len(timesteps_used_epoch) - i]    = difference
-                    mean_mask_t_list[len(timesteps_used_epoch) - i]    = mean_mask_t
-                    mean_mask_next_t_list[len(timesteps_used_epoch) - i]    = mean_mask_next_t
                     sample_t_list[len(timesteps_used_epoch) - i]    = sample_t
                     
                 sample_progress_bar.update(1)
         sample_progress_bar.close()
     
-        return sample_0, sample_t_list, sample_0_list, network_output_t_list, degrade_mask_t_list, degrade_mask_next_t_list, degrade_t_list, degrade_next_t_list, difference_list, mean_mask_t_list, mean_mask_next_t_list
-     
+        return sample_0, sample_t_list, sample_0_list
+    
     
     def _sample_mean_shift_momentum(self, model: Module, timesteps_used_epoch):
         latent                      = self._get_latent_initial(model)
