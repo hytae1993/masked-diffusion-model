@@ -13,6 +13,7 @@ from torchvision.transforms.functional import rotate
 from torchmetrics.image.fid import FrechetInceptionDistance
 from torchvision import transforms
 
+import math
 import numpy as np
 import csv
 import statistics
@@ -67,8 +68,13 @@ class Sampler:
                 sample  = self._sample_mean_shift_momentum(model, timesteps_used_epoch)
                 return sample 
             elif self.args.method == 'test':
-                sample_0, sample_t_list, sample_0_list = self._sample_momentum(model, timesteps_used_epoch)
-                return sample_0, sample_t_list, sample_0_list
+                if self.args.test_method == "base":
+                    sample_0, sample_t_list, sample_0_list = self._sample_momentum(model, timesteps_used_epoch)
+                    return sample_0
+                elif self.args.test_method == "mean_shift":
+                    sample  = self._sample_mean_shift_momentum(model, timesteps_used_epoch)
+                    return sample
+                
             
     
     def test_sample(self, model: Module):
@@ -244,13 +250,26 @@ class Sampler:
                     elif self.args.momentum_adaptive == 'momentum':
                         '''
                         new momentum sampling
+                        difference: x_t - D(x_0, t)
+                        weight: a, 1-a
                         '''
                         momentum    = (1-self.args.adaptive_momentum_rate) * momentum + self.args.adaptive_momentum_rate * difference
                         sample_t    = momentum + degraded_next_t
                         
+                    elif self.args.momentum_adaptive == 'boosting':
+                        '''
+                        weight: a^2 + b^2 = 1, a is decaying parameter
+                        '''
+                        ratio       = self.Scheduler.get_ratio_list()
+                        a           = ratio[i-1]
+                        b           = math.sqrt(1-(a**2))
+                        
+                        momentum    = (a**2) * momentum + (b**2) * difference
+                        momentum    = difference
+                        sample_t    = momentum + degraded_next_t
+                        
                     
                     sample_t_list[len(timesteps_used_epoch) - i]    = sample_t
-                    
                 sample_progress_bar.update(1)
         sample_progress_bar.close()
     
@@ -300,8 +319,34 @@ class Sampler:
                         degraded_t, degrade_mask_t, mean_mask_t                 = self.Scheduler.degrade_index_sampling(new_index_list, black_area_num_t, sample_0, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
                         degraded_next_t, degrade_mask_next_t, mean_mask_next_t  = self.Scheduler.degrade_index_sampling(new_index_list, black_area_num_next_t, sample_0, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
                         
-                    difference      = degraded_next_t - degraded_t
-                    sample_t        = sample_t + difference
+                    difference  = sample_t - degraded_t
+                    if self.args.momentum_adaptive == 'base_momentum':
+                        """
+                        base momenutm sampling: cold diffusion
+                        x_{t-1} = x_t - D(x_0, t) + D(x_0, t-1)
+                        """
+                        sample_t    = degraded_next_t + difference
+                        
+                    elif self.args.momentum_adaptive == 'momentum':
+                        '''
+                        new momentum sampling
+                        difference: x_t - D(x_0, t)
+                        weight: a, 1-a
+                        '''
+                        momentum    = (1-self.args.adaptive_momentum_rate) * momentum + self.args.adaptive_momentum_rate * difference
+                        sample_t    = momentum + degraded_next_t
+                        
+                    elif self.args.momentum_adaptive == 'boosting':
+                        '''
+                        weight: a^2 + b^2 = 1, a is decaying parameter
+                        '''
+                        ratio       = self.Scheduler.get_ratio_list()
+                        a           = ratio[i-1]
+                        b           = math.sqrt(1-(a**2))
+                        
+                        momentum    = (a**2) * momentum + (b**2) * difference
+                        momentum    = difference
+                        sample_t    = momentum + degraded_next_t
                     
                 sample_progress_bar.update(1)
         sample_progress_bar.close()
