@@ -50,7 +50,7 @@ class Tester:
         self.Scheduler          = Scheduler(args)
         self.Sampler            = Sampler(self.dataset, self.args, self.Scheduler)
         
-        self.cosine_similarity_th  = 0.80
+        self.cosine_similarity_th  = 0.9
         
         self.timesteps_used_epoch   = None
          
@@ -71,7 +71,7 @@ class Tester:
             dir_sample_num_save         = dirs.list_dir['test_sample_num']
             dir_sample_neighbor_save    = dirs.list_dir['test_sample_neighbor']
             
-            total_unique_images     = []
+            total_unique_images     = torch.empty(0,3,self.args.data_size,self.args.data_size)
             num_total_unique_images = []
             
             dataloader  = DataLoader(self.dataset, batch_size=1, drop_last=False, shuffle=False)
@@ -80,32 +80,30 @@ class Tester:
                 data            = normalize01(data)
                 train_set[i]    = data
             
-            img_set = [[] for _ in range(self.args.data_subset_num)]
+            img_set = [torch.empty(0,3,self.args.data_size,self.args.data_size) for _ in range(self.args.data_subset_num)]
             
             idx = 0
             while(len(total_unique_images) < self.args.data_subset_num):
                 self.ema_model.store(self.model.parameters())
                 # model_ema.parameters => model.parameters
                 self.ema_model.copy_to(self.model.parameters())
-                sample_0    = self.Sampler.sample(self.model.eval(), self.timesteps_used_epoch)
+                generated_image = self.Sampler.sample(self.model.eval(), self.timesteps_used_epoch)
                 # sample_0, _, _ = self.Sampler.sample(self.model.eval(), self.timesteps_used_epoch)
                 # model_ema.temp => model.parameters
                 self.ema_model.restore(self.model.parameters())
             
-                generated_image = [sample_0[i].unsqueeze(dim=0) for i in range(sample_0.shape[0])]
-
                 unique_in_batch     = self.remove_duplicates_in_batches(generated_image)
                 unique_across_batch = self.remove_duplicates_across_batches(unique_in_batch, total_unique_images)
-                total_unique_images.extend(unique_across_batch)
-                num_total_unique_images.append(len(total_unique_images))
+                total_unique_images = torch.cat((total_unique_images, unique_across_batch.cpu()),dim=0)
+                num_total_unique_images.append(total_unique_images.shape[0])
                 
-                unique_images   = torch.stack(total_unique_images)
                 
-                for i in range(int(unique_images.shape[0] / 100)+1):
+                
+                for i in range(int(total_unique_images.shape[0] / 100)+1):
                     try:
-                        save_part       = unique_images[i*100:(i+1)*100]
+                        save_part       = total_unique_images[i*100:(i+1)*100]
                     except IndexError:
-                        save_part       = unique_images[i*100:]
+                        save_part       = total_unique_images[i*100:]
                     sample          = self.Sampler._save_image_grid(save_part.squeeze(dim=1), normalization='image')
                     img_name        = os.path.join(dir_sample_img_save, 'sample_{}_{}.png'.format(idx, i))
                     if sample != None:
@@ -118,9 +116,9 @@ class Tester:
                 # sampling 이미지 하나와 dataset 전체와 비교하여 가장 가까운 이미지 찾기
                 # 이때, 가장 가까운 이미지는 cosine similarity가 가장 큰 값 기준
                 # 가장 큰 이미지와 매칭할 때, 이미 매칭된 이미지가 있다면 매칭되어 있는 이미지와의 cs 계산, cs가 일정 값 이하면 추가
-                max_idx = self.get_nearest_neighbor_idx(torch.stack(generated_image))
-                img_set = self.get_similar_neighbor(generated_image, img_set, max_idx)
-                # self.save_neighbor(img_set, train_set)
+                max_idx = self.get_nearest_neighbor_idx(unique_across_batch)
+                img_set = self.get_similar_neighbor(unique_across_batch.cpu(), img_set, max_idx)
+                self.save_neighbor(img_set, train_set, dir_sample_neighbor_save)
                 
                 idx += 1
                 
@@ -150,38 +148,42 @@ class Tester:
     
     
     def remove_duplicates_in_batches(self, current_batch):
-        unique_in_batch = []
         
-        for idx, image in enumerate(current_batch):
-            is_duplicate = False
-            for i in range(len(current_batch)):
-                if i == idx:
-                    continue
-                else:
-                    similarity = self.cosine_similarity(image, current_batch[i])
-                    if similarity > self.cosine_similarity_th:  
-                        is_duplicate = True
-                        break
-            if not is_duplicate:
+        unique_in_batch = [current_batch[0]]
+        for image in current_batch[1:]:
+            is_similar = False
+            for existing_image in unique_in_batch:
+                similarity_score = self.cosine_similarity(image, existing_image)
+                if similarity_score >= self.cosine_similarity_th:
+                    is_similar = True
+                    break
+            if not is_similar:
                 unique_in_batch.append(image)
-                
-        return unique_in_batch
+        return torch.stack(unique_in_batch)
         
 
     def remove_duplicates_across_batches(self, unique_in_batch, previous_images):
         
         unique_images = []
-        for idx, image in enumerate(unique_in_batch):
-            is_duplicate = False
+        for image in unique_in_batch:
+            is_similar = False
             for prev_image in previous_images:
-                similarity = self.cosine_similarity(image, prev_image)
+                try:
+                    similarity = self.cosine_similarity(image, prev_image)
+                except RuntimeError:
+                    similarity = self.cosine_similarity(image.cpu(), prev_image)
+                    
                 if similarity > self.cosine_similarity_th:  
-                    is_duplicate = True
+                    is_similar = True
                     break
-            if not is_duplicate:
+            if not is_similar:
                 unique_images.append(image)
-
-        return unique_images
+        try:
+            unique  = torch.stack(unique_images)
+        except RuntimeError:
+            unique  = torch.empty(0,3,self.args.data_size,self.args.data_size)
+            
+        return unique
     
     
     def get_nearest_neighbor_idx(self, source: torch.Tensor):
@@ -206,62 +208,73 @@ class Tester:
     
     def get_similar_neighbor(self, generated_image, img_set, idx):
         for i in range(len(generated_image)):
-            similar = False
-            if len(img_set[idx[i]]) > 0:
-                for j in range(len(img_set[idx[i]])):
+            is_similar = False
+            if img_set[idx[i]].shape[0] > 0:
+                for j in range(img_set[idx[i]].shape[0]):
                     score   = self.cosine_similarity(generated_image[i], img_set[idx[i]][j])
-                    if score > 0.95:
-                        similar = True
+                    if score > self.cosine_similarity_th:
+                        is_similar = True
                         break
-                if not similar:
-                    img_set[idx[i]].append(generated_image[i])
+                if not is_similar:
+                    img_set[idx[i]] = torch.cat((img_set[idx[i]], generated_image[i].unsqueeze(dim=0)), dim=0)
             else:
-                img_set[idx[i]].append(generated_image[i])
+                img_set[idx[i]] = torch.cat((img_set[idx[i]], generated_image[i].unsqueeze(dim=0)), dim=0)
                 
         return img_set
     
     
-    def save_neighbor(self, img_set, train_set):
-        chunk   = math.ceil(self.args.data_subset_num / 10)
+    def save_neighbor(self, img_set, train_set, dir):
+        chunk_length    = 10
+        chunk           = math.ceil(self.args.data_subset_num / chunk_length)
         
         for idx in range(chunk):
-            print(idx)
-            print("=================")
             try:
-                train_list  = train_set[idx*10:(idx+1)*10]
-                sample_list = img_set[idx*10:(idx+1)*10]
+                train_list  = train_set[idx*chunk_length:(idx+1)*chunk_length, :, :, :]
+                sample_list = img_set[idx*chunk_length:(idx+1)*chunk_length]
             except IndexError:
-                train_list  = train_set[idx*10:]
-                sample_list = img_set[idx*10:]
+                train_list  = train_set[idx*chunk_length:, :, :, :]
+                sample_list = img_set[idx*chunk_length:]
                 
             image_set = []
-            for i in range(len(train_list)):
-                try:
-                    image_set.append([train_list[i]] + sample_list[i])
-                except IndexError:
-                    image_set.append([train_list[i]])
+            for i in range(train_list.shape[0]):
+                image_set.append(torch.cat((train_list[i].unsqueeze(dim=0), sample_list[i]), dim=0))
             
             num_rows = len(image_set)
             num_cols = max(len(images) for images in image_set)
+            # if num_cols > 10:
+            #     num_cols    = 10
 
-            fig, axes = plt.subplots(num_rows, num_cols, figsize=(12, 8))
-
+            fig, axes = plt.subplots(num_rows, num_cols, figsize=(15, 3*num_rows))
+            
+            
             for i, images in enumerate(image_set):
+                if i > 10:
+                    break
+                row_idx = i
                 for j, image in enumerate(images):
-                    ax = axes[i, j] if num_rows > 1 else axes[j]
+                    col_idx = j
+
                     image   = normalize01(image)
-                    image   = image.float().mul(255).add_(0.5).clamp_(0, 255)
-                    try:
-                        ax.imshow(image.squeeze().permute(1,2,0))
-                    except TypeError:
-                        image   = image.cpu()
-                        ax.imshow(image.squeeze().permute(1,2,0))
-                        
+                    # image   = image.float().mul(255).add_(0.5).clamp_(0, 255)
+                    
+                    if len(image.shape) == 4: 
+                        image = image[0].permute(1, 2, 0).cpu().numpy()  
+                    else:
+                        image = image.permute(1, 2, 0).cpu().numpy() 
+
+                    if num_cols > 1:
+                        ax = axes[row_idx, col_idx]
+                    else:
+                        ax = axes[row_idx]
+                    
+                    ax.imshow(image)
                     ax.axis('off')
 
-            for i in range(num_rows):
-                for j in range(len(image_set[i]), num_cols):
-                    axes[i, j].axis('off')
+                if len(images) == 1:
+                    for k in range(1, num_cols):
+                        fig.delaxes(axes[row_idx, k])
 
-            fig.tight_layout()
-            fig.savefig('test_{}.png'.format(idx))
+            plt.tight_layout()
+            
+            img_name    = os.path.join(dir, 'neighbor_{}.png'.format(idx))
+            fig.savefig(img_name)
