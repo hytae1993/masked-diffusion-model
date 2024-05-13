@@ -486,12 +486,20 @@ class Scheduler:
     
     
     def get_schedule_shift_time(self, timesteps: torch.IntTensor) -> torch.FloatTensor:
-        random      = torch.FloatTensor(len(timesteps)).uniform_(-1.0, +1.0)
+        # random      = torch.FloatTensor(len(timesteps)).uniform_(-1.0, +1.0)
+        random      = torch.FloatTensor(len(timesteps),3,self.height,self.width).uniform_(-1.0, +1.0)
         random      = random.to(timesteps.device)
         timesteps   = timesteps.int()
+        
         ratio       = torch.index_select(self.ratio_list.to(timesteps.device), 0, timesteps-1)
         
-        shift_time  = random * ratio
+        try:
+            shift_time  = random * ratio
+        except RuntimeError:
+            ratio       = ratio.unsqueeze(dim=-1).unsqueeze(dim=-1).unsqueeze(dim=-1)
+            ratio       = ratio.expand_as(random)
+            shift_time  = random * ratio
+            
         # reverse_ratio   = torch.index_select(torch.flip(self.ratio_list, [0]).to(timesteps.device), 0, timesteps-1)
         # shift_time  = random * reverse_ratio
         shift_time  = shift_time.to(self.args.weight_dtype)
@@ -499,21 +507,30 @@ class Scheduler:
     
     
     def perturb_shift(self, data: torch.FloatTensor, shift: torch.FloatTensor):
-        shift   = shift[:,None,None,None]
-        shift   = shift.to(data.device)
-        data    = data + shift 
+        try: 
+            shift   = shift.to(data.device)
+            data    = data + shift 
+        except RuntimeError:
+            shift   = shift[:,None,None,None]
+            shift   = shift.to(data.device)
+            data    = data + shift 
         return data
     
     
     def perturb_shift_inverse(self, data: torch.FloatTensor, shift: torch.FloatTensor):
-        shift   = shift[:,None,None,None]
-        shift   = shift.to(data.device)
-        data    = data - shift 
+        try:
+            shift   = shift.to(data.device)
+            data    = data - shift 
+        except RuntimeError:
+            shift   = shift[:,None,None,None]
+            shift   = shift.to(data.device)
+            data    = data - shift 
         return data
     
     
     def get_weight_timesteps(self, timesteps: torch.IntTensor, power_base: torch.FloatTensor=2.0):
-        alpha   = torch.linspace(start=1, end=0, steps=self.updated_ddpm_num_steps)
+        # alpha   = torch.linspace(start=1, end=0, steps=self.updated_ddpm_num_steps)
+        alpha   = torch.linspace(start=0, end=1, steps=self.updated_ddpm_num_steps)
         power   = torch.pow(power_base, alpha)
         power   = power.to(timesteps.device)
         weight  = power[timesteps]
