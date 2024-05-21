@@ -31,6 +31,7 @@ class Trainer:
     def __init__(self,
         args,
         dataloader,
+        dataset,
         model,
         ema_model,
         optimizer,
@@ -39,6 +40,7 @@ class Trainer:
         ):
         self.args               = args
         self.dataloader         = dataloader
+        self.dataset            = dataset
         self.model              = model
         self.ema_model          = ema_model
         self.optimizer          = optimizer
@@ -49,31 +51,31 @@ class Trainer:
         self.criterion          = nn.MSELoss()
         
         self.Scheduler          = Scheduler(args)
-        self.Sampler            = Sampler(self.dataloader, self.args, self.Scheduler)
+        self.Sampler            = Sampler(self.dataset, self.args, self.Scheduler)
         
         self.global_step        = 0
         
         self.train_visual_names     = ['input','degraded_img', 'degradation_mask', 'mask', 'mean_pixel', 'degrade_binary_masks', 'reconstructed_img']
-        if self.args.sampling == 'base':
-            self.sample_visual_names    = [\
-                                    # 'sample_result', 'sample_trained_x_0_list', 'sample_trained_t_list', 'sample_trained_mask_list', \
-                                    'ema_sample_result_normalize_global', 'ema_sample_x_0_list_normalize_global', 'ema_sample_t_list_normalize_global', 'ema_sample_mean_mask_list_normalize_global', 'ema_sample_degrade_mask_list_normalize_global', 'ema_sample_network_output_list_normalize_global',\
-                                        'ema_sample_result_normalize_local', 'ema_sample_x_0_list_normalize_local', 'ema_sample_t_list_normalize_local', 'ema_sample_mean_mask_list_normalize_local', 'ema_sample_degrade_mask_list_normalize_local', 'ema_sample_network_output_list_normalize_local']
-        elif self.args.sampling == 'momentum':
-            # self.sample_visual_names    = [\
-            #                                 'ema_sample_result_normalize_global', 'ema_sample_result_normalize_local',
-            #                                 'ema_sample_x_0_list_normalize_global', 'ema_sample_t_list_normalize_global', 'ema_sample_network_output_list_normalize_global', 'ema_sample_degrade_mask_t_list_normalize_global', 'ema_sample_degrade_mask_next_t_list_normalize_global', 'ema_sample_degrade_t_list_normalize_global', 'ema_sample_degrade_next_t_list_normalize_global', 'ema_sample_degrade_difference_list_normalize_global', 'ema_sample_mean_mask_t_list_normalize_global', 'ema_sample_mean_mask_next_t_list_normalize_global', \
-            #                                  'ema_sample_x_0_list_normalize_local', 'ema_sample_t_list_normalize_local', 'ema_sample_network_output_list_normalize_local', 'ema_sample_degrade_mask_t_list_normalize_local', 'ema_sample_degrade_mask_next_t_list_normalize_local', 'ema_sample_degrade_t_list_normalize_local', 'ema_sample_degrade_next_t_list_normalize_local', 'ema_sample_degrade_difference_list_normalize_local', 'ema_sample_mean_mask_t_list_normalize_local', 'ema_sample_mean_mask_next_t_list_normalize_local', \
-            #                                 ]
-            self.sample_visual_names    = [\
-                                            'ema_sample_result_normalize_global', 'ema_sample_result_normalize_local', \
-                                            # 'ema_sample_x_0_list_normalize_global', 'ema_sample_t_list_normalize_global', 'ema_sample_network_output_list_normalize_global', \
-                                            #  'ema_sample_x_0_list_normalize_local', 'ema_sample_t_list_normalize_local', 'ema_sample_network_output_list_normalize_local', \
+        
+        # self.sample_visual_names    = [\
+        #                                 'ema_sample_result_normalize_global', 'ema_sample_result_normalize_local',
+        #                                 'ema_sample_x_0_list_normalize_global', 'ema_sample_t_list_normalize_global', 'ema_sample_network_output_list_normalize_global', 'ema_sample_degrade_mask_t_list_normalize_global', 'ema_sample_degrade_mask_next_t_list_normalize_global', 'ema_sample_degrade_t_list_normalize_global', 'ema_sample_degrade_next_t_list_normalize_global', 'ema_sample_degrade_difference_list_normalize_global', 'ema_sample_mean_mask_t_list_normalize_global', 'ema_sample_mean_mask_next_t_list_normalize_global', \
+        #                                  'ema_sample_x_0_list_normalize_local', 'ema_sample_t_list_normalize_local', 'ema_sample_network_output_list_normalize_local', 'ema_sample_degrade_mask_t_list_normalize_local', 'ema_sample_degrade_mask_next_t_list_normalize_local', 'ema_sample_degrade_t_list_normalize_local', 'ema_sample_degrade_next_t_list_normalize_local', 'ema_sample_degrade_difference_list_normalize_local', 'ema_sample_mean_mask_t_list_normalize_local', 'ema_sample_mean_mask_next_t_list_normalize_local', \
+        #                                 ]
+        self.sample_visual_names    = [\
+                                        'ema_sample_result_normalize_global', 'ema_sample_result_normalize_local', 'ema_sample_nearest_neighbor_global', 'ema_sample_nearest_neighbor_local',\
+                                        # 'ema_sample_x_0_list_normalize_global', 'ema_sample_t_list_normalize_global', 'ema_sample_network_output_list_normalize_global', \
+                                        #  'ema_sample_x_0_list_normalize_local', 'ema_sample_t_list_normalize_local', 'ema_sample_network_output_list_normalize_local', \
+                                        ]
+        self.sample_extra_visuam_names  = [\
+                                            'ema_sample_x_0_list_normalize_global', 'ema_sample_t_list_normalize_global', 'ema_sample_network_output_list_normalize_global', \
+                                            'ema_sample_x_0_list_normalize_local', 'ema_sample_t_list_normalize_local', 'ema_sample_network_output_list_normalize_local', \
                                             ]
         
-        self.loss_names         = ['reconstruct_loss', 'learning_rate', 'reconstruct_train_mean', 'degraded_train_mean']
+        self.loss_names         = ['reconstruct_loss', 'learning_rate',  'time_steps']
         
         self.mean_names         = [\
+                                    'reconstruct_train_mean', 'degraded_train_mean', \
                                     # 'sample_mean', 'sample_t_mean', 'sample_0_mean', \
                                     'ema_sample_mean', 'ema_sample_t_mean', 'ema_sample_0_mean']
         
@@ -210,6 +212,7 @@ class Trainer:
         
         updated_ddpm_num_steps              = self.Scheduler.update_ddpm_num_steps(self.args.ddpm_num_steps)
         self.args.updated_ddpm_num_steps    = updated_ddpm_num_steps
+        self.time_steps                     = self.Scheduler.get_black_area_num_pixels_all()
         
         # print(self.args.updated_ddpm_num_steps)
         # print(self.Scheduler.get_black_area_num_pixels_all())
@@ -235,14 +238,10 @@ class Trainer:
             end = timer()
             elapsed_time = end - start
             if self.accelerator.is_main_process:
-                # loss_mean       = statistics.mean(loss)
-                # loss_std        = statistics.stdev(loss, loss_mean)
-                # reconstruct_loss    = loss_mean
+                loss_mean       = statistics.mean(loss)
+                # loss_std        = statistics.stdev(loss)
                 
-                # reconstruct_train_mean = statistics.mean(reconstruct_train_mean)
-                # degraded_train_mean    = statistics.mean(degraded_train_mean)
-
-                # loss_mean_epoch.append(loss_mean)
+                loss_mean_epoch.append(loss_mean)
                 # loss_std_epoch.append(loss_std)
                 
                 if epoch > 0 and (epoch+1) % self.args.save_images_epochs == 0 or epoch == (epoch_start+epoch_length-1) or (epoch+1) % (epoch_length / self.args.scheduler_num_scale_timesteps) == 0:
@@ -250,27 +249,55 @@ class Trainer:
     
                     # self._save_model(dirs, epoch)
                     # self._save_sample(dirs, epoch)
+                    self._save_learning_curve(dirs, loss_mean_epoch, loss_std_epoch)
                     if self.args.use_ema:
                         if self.args.sampling == 'base':
-                            self._save_ema_sample(dirs, epoch)
+                            result  = self._save_ema_sample(dirs, epoch)
                         elif self.args.sampling == 'momentum':
-                            self._save_ema_momentum_sample(dirs, epoch)
-                    # save to wandb
+                            result  = self._save_ema_momentum_sample(dirs, epoch)
+
                     if visualizer is not None:
-                        visualizer.display_current_results(self.get_current_visuals(), epoch)
-                        means = self.get_current_mean()
-                        visualizer.plot_current_losses(epoch, means)
-                # if epoch % 10000 == 0 and epoch !=0:
-                #     # self._save_model(dirs, epoch)
-                #     save_path   = os.path.join(dirs.list_dir['checkpoint'], f"checkpoint-epoch-{epoch}")
-                #     self.accelerator.save_state(save_path)
+                        visualizer.display_current_results(epoch, result)
+                        visualizer.plot_current_losses(epoch, self.get_current_mean(), 'value')
+                    # save to wandb
+                #     if visualizer is not None:
+                #         visualizer.display_current_results(epoch, self.get_current_visuals(epoch))
+                #         visualizer.plot_current_losses(epoch, self.get_current_mean(), 'value')
+                #         # visualizer.plot_current_losses(epoch, self.get_current_losses(), 'list')
+                    save_path   = os.path.join(dirs.list_dir['checkpoint'], f"checkpoint-epoch-{epoch}")
+                    self.accelerator.save_state(save_path)
             
             epoch_progress_bar.update(1)
         
         epoch_progress_bar.close()
         
+        
+    def _save_learning_curve(self, dirs, loss_mean, loss_std):
+        dir_save    = dirs.list_dir['train_loss'] 
+        # file_loss = 'loss_epoch_{:05d}.png'.format(epoch)
+        file_loss = 'loss.png'
+        file_loss = os.path.join(dir_save, file_loss)
+        fig = plt.figure(figsize=(24, 8))
+        
+        plt.subplot(1,3,1)
+        plt.plot(np.array(loss_mean), color='red')
+        # plt.fill_between(list(range(len(loss_mean))), np.array(loss_mean)-np.array(loss_std), np.array(loss_mean)+np.array(loss_std), color='blue', alpha=0.2)
+        plt.title('loss')
+        
+        plt.subplot(1,3,2)
+        plt.plot(np.array(self.lr_list), color='red')
+        plt.title('learning rate')
+        
+        plt.subplot(1,3,3)
+        plt.plot(np.array(self.Scheduler.get_black_area_num_pixels_all()), color='red')
+        plt.title('degrade black area num = {}'.format(len(self.Scheduler.get_black_area_num_pixels_all())))
+        
+        plt.tight_layout()
+        plt.savefig(file_loss, bbox_inches='tight', dpi=100)
+        plt.close(fig)
+        
     
-    def get_current_visuals(self):
+    def get_current_visuals(self, epoch):
         """Return visualization images. train.py will display these images with visdom, and save the images to a HTML"""
         visual_ret = OrderedDict()
         for name in self.train_visual_names:
@@ -286,6 +313,15 @@ class Trainer:
         for name in self.sample_visual_names:
             if isinstance(name, str):
                 visual_ret[name] = getattr(self, name)
+        
+        # for name in self.sample_extra_visuam_names:
+        #     if isinstance(name, str):
+        #         visual_ret[name] = getattr(self, name)
+        # if self.args.num_epochs - epoch < 2:
+        #     for name in self.sample_extra_visuam_names:
+        #         if isinstance(name, str):
+        #             visual_ret[name] = getattr(self, name)
+                    
         return visual_ret
     
     
@@ -294,7 +330,8 @@ class Trainer:
         errors_ret = OrderedDict()
         for name in self.loss_names:
             if isinstance(name, str):
-                errors_ret[name] = float(getattr(self, name))  # float(...) works for both scalar tensor and float number
+                # errors_ret[name] = float(getattr(self, name))  # float(...) works for both scalar tensor and float number
+                errors_ret[name] = getattr(self, name)
         return errors_ret
     
     def get_current_mean(self):
@@ -356,31 +393,56 @@ class Trainer:
         self.ema_sample_t_mean  = ema_t_list.mean()
         self.ema_sample_0_mean  = ema_sample_list.mean()
         
-        file_ema_save                           = 'ema_sample_{:05d}.png'.format(epoch)
-        self.ema_sample_result_normalize_global = self.Sampler._save_image_grid(ema_sample, normalization='global')
-        self.ema_sample_result_normalize_local  = self.Sampler._save_image_grid(ema_sample, normalization='image')
-        
+        visual_ret = OrderedDict()
         nrow = int(np.ceil(np.sqrt(ema_sample_list.shape[1])))
         
-        self.ema_sample_x_0_list_normalize_global                = self.Sampler._save_multi_index_image_grid(ema_sample_list, nrow=nrow, normalization='global', option='skip_first')
-        self.ema_sample_t_list_normalize_global                  = self.Sampler._save_multi_index_image_grid(ema_t_list, nrow=nrow, normalization='global')
-        self.ema_sample_mean_mask_list_normalize_global          = self.Sampler._save_multi_index_image_grid(ema_mean_mask_list, nrow=nrow, normalization='global')
-        self.ema_sample_degrade_mask_list_normalize_global       = self.Sampler._save_multi_index_image_grid(ema_degrade_mask_list, nrow=nrow, normalization='global')
-        self.ema_sample_network_output_list_normalize_global     = self.Sampler._save_multi_index_image_grid(ema_network_output_list, nrow=nrow, normalization='global', option='skip_first')
+        visual_ret['ema_sample_result_normalize_global'] = self.Sampler._save_image_grid(ema_sample, normalization='global')
+        visual_ret['ema_sample_result_normalize_local'] = self.Sampler._save_image_grid(ema_sample, normalization='image')
         
-        self.ema_sample_x_0_list_normalize_local                 = self.Sampler._save_multi_index_image_grid(ema_sample_list, nrow=nrow, normalization='image', option='skip_first')
-        self.ema_sample_t_list_normalize_local                   = self.Sampler._save_multi_index_image_grid(ema_t_list, nrow=nrow, normalization='image')
-        self.ema_sample_mean_mask_list_normalize_local           = self.Sampler._save_multi_index_image_grid(ema_mean_mask_list, nrow=nrow, normalization='image')
-        self.ema_sample_degrade_mask_list_normalize_local        = self.Sampler._save_multi_index_image_grid(ema_degrade_mask_list, nrow=nrow, normalization='image')
-        self.ema_sample_network_output_list_normalize_local      = self.Sampler._save_multi_index_image_grid(ema_network_output_list, nrow=nrow, normalization='image', option='skip_first')
+        # ema_sample_nearest_neighbor             = self.Sampler.get_nearest_neighbor(ema_sample)
+        # visual_ret['ema_sample_nearest_neighbor_global'] = self.Sampler._save_image_grid(ema_sample_nearest_neighbor, normalization='global')
+        # visual_ret['ema_sample_nearest_neighbor_local'] = self.Sampler._save_image_grid(ema_sample, normalization='image')
+
+        if self.args.num_epochs - epoch < 2:
+            visual_ret['ema_sample_x_0_list_normalize_global'] = self.Sampler._save_multi_index_image_grid(ema_sample_list, nrow=nrow, normalization='global', option='skip_first')
+            visual_ret['ema_sample_t_list_normalize_global'] = self.Sampler._save_multi_index_image_grid(ema_t_list, nrow=nrow, normalization='global')
+            visual_ret['ema_sample_network_output_list_normalize_global'] = self.Sampler._save_multi_index_image_grid(ema_network_output_list, nrow=nrow, normalization='global', option='skip_first')
+            
+            visual_ret['ema_sample_x_0_list_normalize_local'] = self.Sampler._save_multi_index_image_grid(ema_sample_list, nrow=nrow, normalization='image', option='skip_first')
+            visual_ret['ema_sample_t_list_normalize_local'] = self.Sampler._save_multi_index_image_grid(ema_t_list, nrow=nrow, normalization='image')
+            visual_ret['ema_sample_network_output_list_normalize_local'] = self.Sampler._save_multi_index_image_grid(ema_network_output_list, nrow=nrow, normalization='image', option='skip_first')
+
+        return visual_ret
         
-        dir_save    = dirs.list_dir['train_loss'] 
-        file_loss   = 'used_timesteps.png'
-        file_loss   = os.path.join(dir_save, file_loss)
-        fig2    = plt.figure()
-        plt.plot(self.Scheduler.get_black_area_num_pixels_all())
-        plt.savefig(file_loss)
-        plt.close(fig2)
+        # file_ema_save                           = 'ema_sample_{:05d}.png'.format(epoch)
+        # self.ema_sample_result_normalize_global = self.Sampler._save_image_grid(ema_sample, normalization='global')
+        # self.ema_sample_result_normalize_local  = self.Sampler._save_image_grid(ema_sample, normalization='image')
+        
+        # ema_sample_nearest_neighbor             = self.Sampler.get_nearest_neighbor(ema_sample)
+        # self.ema_sample_nearest_neighbor_global = self.Sampler._save_image_grid(ema_sample_nearest_neighbor, normalization='global')
+        # self.ema_sample_nearest_neighbor_local  = self.Sampler._save_image_grid(ema_sample_nearest_neighbor, normalization='image')
+        
+        # nrow = int(np.ceil(np.sqrt(ema_sample_list.shape[1])))
+        
+        # self.ema_sample_x_0_list_normalize_global                = self.Sampler._save_multi_index_image_grid(ema_sample_list, nrow=nrow, normalization='global', option='skip_first')
+        # self.ema_sample_t_list_normalize_global                  = self.Sampler._save_multi_index_image_grid(ema_t_list, nrow=nrow, normalization='global')
+        # self.ema_sample_mean_mask_list_normalize_global          = self.Sampler._save_multi_index_image_grid(ema_mean_mask_list, nrow=nrow, normalization='global')
+        # self.ema_sample_degrade_mask_list_normalize_global       = self.Sampler._save_multi_index_image_grid(ema_degrade_mask_list, nrow=nrow, normalization='global')
+        # self.ema_sample_network_output_list_normalize_global     = self.Sampler._save_multi_index_image_grid(ema_network_output_list, nrow=nrow, normalization='global', option='skip_first')
+        
+        # self.ema_sample_x_0_list_normalize_local                 = self.Sampler._save_multi_index_image_grid(ema_sample_list, nrow=nrow, normalization='image', option='skip_first')
+        # self.ema_sample_t_list_normalize_local                   = self.Sampler._save_multi_index_image_grid(ema_t_list, nrow=nrow, normalization='image')
+        # self.ema_sample_mean_mask_list_normalize_local           = self.Sampler._save_multi_index_image_grid(ema_mean_mask_list, nrow=nrow, normalization='image')
+        # self.ema_sample_degrade_mask_list_normalize_local        = self.Sampler._save_multi_index_image_grid(ema_degrade_mask_list, nrow=nrow, normalization='image')
+        # self.ema_sample_network_output_list_normalize_local      = self.Sampler._save_multi_index_image_grid(ema_network_output_list, nrow=nrow, normalization='image', option='skip_first')
+        
+        # dir_save    = dirs.list_dir['train_loss'] 
+        # file_loss   = 'used_timesteps.png'
+        # file_loss   = os.path.join(dir_save, file_loss)
+        # fig2    = plt.figure()
+        # plt.plot(self.Scheduler.get_black_area_num_pixels_all())
+        # plt.savefig(file_loss)
+        # plt.close(fig2)
         
     
     def _save_ema_momentum_sample(self, dirs, epoch):
@@ -390,10 +452,9 @@ class Trainer:
         # model_ema.parameters => model.parameters
         self.ema_model.copy_to(self.model.parameters())
         
-        sample_0, sample_t_list, sample_0_list, network_output_t_list, degrade_mask_t_list, degrade_mask_next_t_list, degrade_t_list, degrade_next_t_list, difference_list, mean_mask_t_list, mean_mask_next_t_list  = self.Sampler.sample(self.model.eval(), self.timesteps_used_epoch)
+        sample_0, sample_t_list, sample_0_list  = self.Sampler.sample(self.model.eval(), self.timesteps_used_epoch)
         
-        sample_t_list, sample_0_list, network_output_t_list, degrade_mask_t_list, degrade_mask_next_t_list, degrade_t_list, degrade_next_t_list, difference_list, mean_mask_t_list, mean_mask_next_t_list   = \
-            sample_t_list.permute(1,0,2,3,4), sample_0_list.permute(1,0,2,3,4), network_output_t_list.permute(1,0,2,3,4), degrade_mask_t_list.permute(1,0,2,3,4), degrade_mask_next_t_list.permute(1,0,2,3,4), degrade_t_list.permute(1,0,2,3,4), degrade_next_t_list.permute(1,0,2,3,4), difference_list.permute(1,0,2,3,4), mean_mask_t_list.permute(1,0,2,3,4), mean_mask_next_t_list.permute(1,0,2,3,4)
+        sample_t_list, sample_0_list    = sample_t_list.permute(1,0,2,3,4), sample_0_list.permute(1,0,2,3,4)
         
         # model_ema.temp => model.parameters
         self.ema_model.restore(self.model.parameters())
@@ -402,57 +463,61 @@ class Trainer:
         self.ema_sample_t_mean  = sample_t_list.mean()
         self.ema_sample_0_mean  = sample_0_list.mean()
         
-        file_ema_save                           = 'ema_sample_{:05d}.png'.format(epoch)
-        self.ema_sample_result_normalize_global = self.Sampler._save_image_grid(sample_0, normalization='global')
-        self.ema_sample_result_normalize_local  = self.Sampler._save_image_grid(sample_0, normalization='image')
-        
+        visual_ret = OrderedDict()
         nrow = int(np.ceil(np.sqrt(sample_0_list.shape[1])))
         
-        # start = time.time()
-        self.ema_sample_x_0_list_normalize_global                   = self.Sampler._save_multi_index_image_grid(sample_0_list, nrow=nrow, normalization='global', option='skip_first')
-        # print("WorkingTime: {} sec".format(time.time()-start))
-        # print("==============================================================================================")
+        visual_ret['ema_sample_result_normalize_global'] = self.Sampler._save_image_grid(sample_0, normalization='global')
+        visual_ret['ema_sample_result_normalize_local'] = self.Sampler._save_image_grid(sample_0, normalization='image')
+        
+        # ema_sample_nearest_neighbor             = self.Sampler.get_nearest_neighbor(sample_0)
+        # visual_ret['ema_sample_nearest_neighbor_global'] = self.Sampler._save_image_grid(ema_sample_nearest_neighbor, normalization='global')
+        # visual_ret['ema_sample_nearest_neighbor_local'] = self.Sampler._save_image_grid(sample_0, normalization='image')
 
-        # start = time.time()
-        self.ema_sample_t_list_normalize_global                     = self.Sampler._save_multi_index_image_grid(sample_t_list, nrow=nrow, normalization='global')
-        # print("WorkingTime: {} sec".format(time.time()-start))
-        # print("==============================================================================================")
-        
-        # start = time.time()
-        self.ema_sample_network_output_list_normalize_global        = self.Sampler._save_multi_index_image_grid(network_output_t_list, nrow=nrow, normalization='global', option='skip_first')
-        # print("WorkingTime: {} sec".format(time.time()-start))
-        # print("==============================================================================================")
-        # self.ema_sample_degrade_mask_t_list_normalize_global        = self.Sampler._save_multi_index_image_grid(degrade_mask_t_list, nrow=nrow, normalization='global', option='skip_first')
-        # self.ema_sample_degrade_mask_next_t_list_normalize_global   = self.Sampler._save_multi_index_image_grid(degrade_mask_next_t_list, nrow=nrow, normalization='global', option='skip_first')
-        # self.ema_sample_degrade_t_list_normalize_global             = self.Sampler._save_multi_index_image_grid(degrade_t_list, nrow=nrow, normalization='global', option='skip_first')
-        # self.ema_sample_degrade_next_t_list_normalize_global        = self.Sampler._save_multi_index_image_grid(degrade_next_t_list, nrow=nrow, normalization='global', option='skip_first')
-        # self.ema_sample_degrade_difference_list_normalize_global    = self.Sampler._save_multi_index_image_grid(difference_list, nrow=nrow, normalization='global', option='skip_first')
-        # self.ema_sample_mean_mask_t_list_normalize_global           = self.Sampler._save_multi_index_image_grid(mean_mask_t_list, nrow=nrow, normalization='global', option='skip_first')
-        # self.ema_sample_mean_mask_next_t_list_normalize_global      = self.Sampler._save_multi_index_image_grid(mean_mask_next_t_list, nrow=nrow, normalization='global', option='skip_first')
-        
-        # start = time.time()
-        self.ema_sample_x_0_list_normalize_local                    = self.Sampler._save_multi_index_image_grid(sample_0_list, nrow=nrow, normalization='image', option='skip_first')
-        # print("WorkingTime: {} sec".format(time.time()-start))
-        # print("==============================================================================================")
-        
-        # start = time.time()
-        self.ema_sample_t_list_normalize_local                      = self.Sampler._save_multi_index_image_grid(sample_t_list, nrow=nrow, normalization='image')
-        # print("WorkingTime: {} sec".format(time.time()-start))
-        # print("==============================================================================================")
-        
-        # start = time.time()
-        self.ema_sample_network_output_list_normalize_local         = self.Sampler._save_multi_index_image_grid(network_output_t_list, nrow=nrow, normalization='image', option='skip_first')
-        # print("WorkingTime: {} sec".format(time.time()-start))
-        # print("==============================================================================================")
-        # self.ema_sample_degrade_mask_t_list_normalize_local         = self.Sampler._save_multi_index_image_grid(degrade_mask_t_list, nrow=nrow, normalization='image', option='skip_first')
-        # self.ema_sample_degrade_mask_next_t_list_normalize_local    = self.Sampler._save_multi_index_image_grid(degrade_mask_next_t_list, nrow=nrow, normalization='image', option='skip_first')
-        # self.ema_sample_degrade_t_list_normalize_local              = self.Sampler._save_multi_index_image_grid(degrade_t_list, nrow=nrow, normalization='image', option='skip_first')
-        # self.ema_sample_degrade_next_t_list_normalize_local         = self.Sampler._save_multi_index_image_grid(degrade_next_t_list, nrow=nrow, normalization='image', option='skip_first')
-        # self.ema_sample_degrade_difference_list_normalize_local     = self.Sampler._save_multi_index_image_grid(difference_list, nrow=nrow, normalization='image', option='skip_first')
-        # self.ema_sample_mean_mask_t_list_normalize_local            = self.Sampler._save_multi_index_image_grid(mean_mask_t_list, nrow=nrow, normalization='image', option='skip_first')
-        # self.ema_sample_mean_mask_next_t_list_normalize_local       = self.Sampler._save_multi_index_image_grid(mean_mask_next_t_list, nrow=nrow, normalization='image', option='skip_first')
-        
+        if self.args.num_epochs - epoch < 2:
+            visual_ret['ema_sample_x_0_list_normalize_global'] = self.Sampler._save_multi_index_image_grid(sample_0_list, nrow=nrow, normalization='global', option='skip_first')
+            visual_ret['ema_sample_t_list_normalize_global'] = self.Sampler._save_multi_index_image_grid(sample_t_list, nrow=nrow, normalization='global')
+            # visual_ret['ema_sample_network_output_list_normalize_global'] = self.Sampler._save_multi_index_image_grid(network_output_t_list, nrow=nrow, normalization='global', option='skip_first')
+            
+            visual_ret['ema_sample_x_0_list_normalize_local'] = self.Sampler._save_multi_index_image_grid(sample_0_list, nrow=nrow, normalization='image', option='skip_first')
+            visual_ret['ema_sample_t_list_normalize_local'] = self.Sampler._save_multi_index_image_grid(sample_t_list, nrow=nrow, normalization='image')
+            # visual_ret['ema_sample_network_output_list_normalize_local'] = self.Sampler._save_multi_index_image_grid(network_output_t_list, nrow=nrow, normalization='image', option='skip_first')
 
+        return visual_ret
+        # file_ema_save                           = 'ema_sample_{:05d}.png'.format(epoch)
+        # self.ema_sample_result_normalize_global = self.Sampler._save_image_grid(sample_0, normalization='global')
+        # self.ema_sample_result_normalize_local  = self.Sampler._save_image_grid(sample_0, normalization='image')
+        
+        # ema_sample_nearest_neighbor             = self.Sampler.get_nearest_neighbor(sample_0)
+        # self.ema_sample_nearest_neighbor_global = self.Sampler._save_image_grid(ema_sample_nearest_neighbor, normalization='global')
+        # self.ema_sample_nearest_neighbor_local  = self.Sampler._save_image_grid(ema_sample_nearest_neighbor, normalization='image')
+        
+        # nrow = int(np.ceil(np.sqrt(sample_0_list.shape[1])))
+        
+        # # start = time.time()
+        # self.ema_sample_x_0_list_normalize_global                   = self.Sampler._save_multi_index_image_grid(sample_0_list, nrow=nrow, normalization='global', option='skip_first')
+        # self.ema_sample_t_list_normalize_global                     = self.Sampler._save_multi_index_image_grid(sample_t_list, nrow=nrow, normalization='global')
+        # self.ema_sample_network_output_list_normalize_global        = self.Sampler._save_multi_index_image_grid(network_output_t_list, nrow=nrow, normalization='global', option='skip_first')
+        # # self.ema_sample_degrade_mask_t_list_normalize_global        = self.Sampler._save_multi_index_image_grid(degrade_mask_t_list, nrow=nrow, normalization='global', option='skip_first')
+        # # self.ema_sample_degrade_mask_next_t_list_normalize_global   = self.Sampler._save_multi_index_image_grid(degrade_mask_next_t_list, nrow=nrow, normalization='global', option='skip_first')
+        # # self.ema_sample_degrade_t_list_normalize_global             = self.Sampler._save_multi_index_image_grid(degrade_t_list, nrow=nrow, normalization='global', option='skip_first')
+        # # self.ema_sample_degrade_next_t_list_normalize_global        = self.Sampler._save_multi_index_image_grid(degrade_next_t_list, nrow=nrow, normalization='global', option='skip_first')
+        # # self.ema_sample_degrade_difference_list_normalize_global    = self.Sampler._save_multi_index_image_grid(difference_list, nrow=nrow, normalization='global', option='skip_first')
+        # # self.ema_sample_mean_mask_t_list_normalize_global           = self.Sampler._save_multi_index_image_grid(mean_mask_t_list, nrow=nrow, normalization='global', option='skip_first')
+        # # self.ema_sample_mean_mask_next_t_list_normalize_global      = self.Sampler._save_multi_index_image_grid(mean_mask_next_t_list, nrow=nrow, normalization='global', option='skip_first')
+        
+        # self.ema_sample_x_0_list_normalize_local                    = self.Sampler._save_multi_index_image_grid(sample_0_list, nrow=nrow, normalization='image', option='skip_first')
+        # self.ema_sample_t_list_normalize_local                      = self.Sampler._save_multi_index_image_grid(sample_t_list, nrow=nrow, normalization='image')
+        # self.ema_sample_network_output_list_normalize_local         = self.Sampler._save_multi_index_image_grid(network_output_t_list, nrow=nrow, normalization='image', option='skip_first')
+        # # self.ema_sample_degrade_mask_t_list_normalize_local         = self.Sampler._save_multi_index_image_grid(degrade_mask_t_list, nrow=nrow, normalization='image', option='skip_first')
+        # # self.ema_sample_degrade_mask_next_t_list_normalize_local    = self.Sampler._save_multi_index_image_grid(degrade_mask_next_t_list, nrow=nrow, normalization='image', option='skip_first')
+        # # self.ema_sample_degrade_t_list_normalize_local              = self.Sampler._save_multi_index_image_grid(degrade_t_list, nrow=nrow, normalization='image', option='skip_first')
+        # # self.ema_sample_degrade_next_t_list_normalize_local         = self.Sampler._save_multi_index_image_grid(degrade_next_t_list, nrow=nrow, normalization='image', option='skip_first')
+        # # self.ema_sample_degrade_difference_list_normalize_local     = self.Sampler._save_multi_index_image_grid(difference_list, nrow=nrow, normalization='image', option='skip_first')
+        # # self.ema_sample_mean_mask_t_list_normalize_local            = self.Sampler._save_multi_index_image_grid(mean_mask_t_list, nrow=nrow, normalization='image', option='skip_first')
+        # # self.ema_sample_mean_mask_next_t_list_normalize_local       = self.Sampler._save_multi_index_image_grid(mean_mask_next_t_list, nrow=nrow, normalization='image', option='skip_first')
+        
+        
+        
 
     def _save_model(self, dirs: dict, epoch: int):
         '''

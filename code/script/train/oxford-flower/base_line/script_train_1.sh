@@ -2,41 +2,46 @@
 
 # ==============================
 task="train"
-dir_work="/nas/users/hyuntae/code/doctor/segmentation-energy-based-model"
+dir_work="/nas/users/hyuntae/code/doctor/masked-diffusion-model"
 dir_dataset="/nas2/dataset/hyuntae"
-data_name="DUTS"
+data_name="oxford-flower"
 data_set="train"
-data_subset_use=True
-data_subset_label=5
-data_size=352
+data_size=64
 date=""
 time=""
-title="without_mse_of_gt_without_noise_one_lang_lr"
+title="test"
 # ==============================
-method="from_image"
-architecture="ResNet"
-channel_reduced_gen=32
-latent_dim=8
-channel_reduced_des=64
-out_channel=1
-batch_size=4
-epoch_length=30
+model=default
+batch_size=16
+num_epochs=100
 optim="adam"
-lr_scheduler="Decay"
-lr_generator_max=5e-5
-lr_discriminator_max=1e-3
-lr_decay_rate=0.9
-lr_decay_epoch=20
-dim_feature=8
-weight_reg=0.001
-langevin_length=3
-langevin_lr=0.001
-langevin_noise_lr=0
-energy_form='identity' 
-save_every=1
-epoch_resume=1
-num_workers=4
-cuda_device=0
+lr=1e-4
+lr_scheduler="cosine"
+lr_warmup_steps=500
+gradient_accumulation_steps=1
+sample_num=100
+sample_epoch_ratio=0.2
+resume_from_checkpoint=False
+num_workers=32
+use_ema=True
+ema_inv_gamma=1.0
+ema_power=0.75
+ema_max_decay=0.9999
+
+
+
+mixed_precision="fp16"
+ddpm_num_steps=1000
+ddpm_beta_schedule="linear"
+checkpointing_steps=500
+save_images_epochs=1
+save_images_batch=100
+save_loss=1
+ddpm_num_inference_steps=1000
+
+device="2"
+
+
 
 # ==============================
 list_iter=(0)
@@ -47,7 +52,7 @@ echo ${list_iter[@]}
 # ==============================
 hostname=$HOSTNAME
 time_stamp=`date +"%Y-%m-%d-%T"`
-code=${dir_work}"/code/main_train_saliency.py"
+code=${dir_work}"/code/main_train_baseline.py"
 # ==============================
 <<comment
 comment
@@ -55,41 +60,40 @@ comment
 for iter in ${list_iter[@]}
 do 
     echo "${hostname}.${task}.${data_name}.${time_stamp}.log"
-    python ${code} \
+    accelerate launch --config_file '/nas/users/hyuntae/code/doctor/masked-diffusion-model/code/script/train/config/gpu0_config.yaml' ${code} \
         --task=${task} \
         --dir_work=${dir_work} \
         --dir_dataset=${dir_dataset} \
         --data_name=${data_name} \
         --data_set=${data_set} \
-        --data_subset_use=${data_subset_use} \
-        --data_subset_label=${data_subset_label} \
         --data_size=${data_size} \
         --date=${date} \
         --time=${time} \
         --title=${title} \
-        --method=${method} \
-        --architecture=${architecture} \
-        --channel_reduced_gen=${channel_reduced_gen} \
-        --latent_dim=${latent_dim} \
-        --channel_reduced_des=${channel_reduced_des} \
-        --dim_feature=${dim_feature} \
-        --out_channel=${out_channel} \
+        --model=${model} \
         --batch_size=${batch_size} \
-        --epoch_length=${epoch_length} \
+        --num_epochs=${num_epochs} \
         --optim=${optim} \
+        --lr=${lr} \
         --lr_scheduler=${lr_scheduler} \
-        --lr_generator_max=${lr_generator_max} \
-        --lr_discriminator_max=${lr_discriminator_max} \
-        --lr_decay_rate=${lr_decay_rate} \
-        --lr_decay_epoch=${lr_decay_epoch} \
-        --weight_reg=${weight_reg} \
-        --langevin_length=${langevin_length} \
-        --langevin_lr=${langevin_lr} \
-        --langevin_noise_lr=${langevin_noise_lr} \
-        --energy_form=${energy_form} \
-        --save_every=${save_every} \
-        --epoch_resume=${epoch_resume} \
+        --lr_warmup_steps=${lr_warmup_steps} \
+        --gradient_accumulation_steps=${gradient_accumulation_steps} \
+        --sample_num=${sample_num} \
+        --sample_epoch_ratio=${sample_epoch_ratio} \
+        --resume_from_checkpoint=${resume_from_checkpoint} \
         --num_workers=${num_workers} \
-        --cuda_device=${cuda_device} \
+        --use_ema=${use_ema} \
+        --ema_inv_gamma=${ema_inv_gamma} \
+        --ema_power=${ema_power} \
+        --ema_max_decay=${ema_max_decay} \
+        --mixed_precision=${mixed_precision} \
+        --ddpm_num_steps=${ddpm_num_steps} \
+        --ddpm_beta_schedule=${ddpm_beta_schedule} \
+        --checkpointing_steps=${checkpointing_steps} \
+        --save_images_epochs=${save_images_epochs} \
+        --save_images_batch=${save_images_batch} \
+        --save_loss=${save_loss} \
+        --ddpm_num_inference_steps=${ddpm_num_inference_steps} \
+        --device=${device} \
         # > ${hostname}.${task}.${data_name}.${time_stamp}.log
 done

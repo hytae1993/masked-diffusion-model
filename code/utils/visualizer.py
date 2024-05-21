@@ -7,7 +7,7 @@ from . import util
 from subprocess import Popen, PIPE
 from time import strptime
 from PIL import Image
-import mlflow
+# import mlflow
 import wandb
 # from torch.utils.tensorboard import SummaryWriter
 
@@ -77,15 +77,15 @@ class Visualizer():
             self.wandb_run = wandb.init(project=self.project_name, name=name, config=args) if not wandb.run else wandb.run
             self.wandb_run._label(repo='Mask-Diffusion')
             
-        if self.use_mlflow:
-            mlflow.set_tracking_uri("http://165.194.34.47:7789")
-            try:
-                mlflow.create_experiment(self.project_name)
-                mlflow.set_experiment(self.project_name)
-            except mlflow.exceptions.RestException:
-                mlflow.set_experiment(self.project_name)
+        # if self.use_mlflow:
+        #     mlflow.set_tracking_uri("http://165.194.34.47:7789")
+        #     try:
+        #         mlflow.create_experiment(self.project_name)
+        #         mlflow.set_experiment(self.project_name)
+        #     except mlflow.exceptions.RestException:
+        #         mlflow.set_experiment(self.project_name)
             
-            mlflow.set_tag('mlflow.runName', name)
+        #     mlflow.set_tag('mlflow.runName', name)
             
         # if self.use_tensorboard:
         #     writer = SummaryWriter()
@@ -98,7 +98,7 @@ class Visualizer():
         """Reset the self.saved status"""
         self.saved = False
 
-    def display_current_results(self, visuals, epoch):
+    def display_current_results(self, epoch, visuals):
         """Display current results on visdom; save current results to an HTML file.
 
         Parameters:
@@ -124,25 +124,25 @@ class Visualizer():
             if epoch != self.current_epoch:
                 self.current_epoch = epoch
                 
-        if self.use_mlflow:
-            columns = [key for key, _ in visuals.items()]
-            columns.insert(0, 'epoch')
-            ims_dict = {}
-            for label, image in visuals.items():
-                if type(image) == list:
-                    wandb_image = []
-                    for i in range(len(image)):
-                        image_numpy = util.tensor2im(image[i])
-                        # wandb_image.append(wandb.Image(image_numpy))
-                        # wandb_image.append(wandb.Image(image[i]))
-                else:
-                    image_numpy = util.tensor2im(image)
-                    # wandb_image = wandb.Image(image_numpy)
-                    # wandb_image = wandb.Image(image)
+        # if self.use_mlflow:
+        #     columns = [key for key, _ in visuals.items()]
+        #     columns.insert(0, 'epoch')
+        #     ims_dict = {}
+        #     for label, image in visuals.items():
+        #         if type(image) == list:
+        #             wandb_image = []
+        #             for i in range(len(image)):
+        #                 image_numpy = util.tensor2im(image[i])
+        #                 # wandb_image.append(wandb.Image(image_numpy))
+        #                 # wandb_image.append(wandb.Image(image[i]))
+        #         else:
+        #             image_numpy = util.tensor2im(image)
+        #             # wandb_image = wandb.Image(image_numpy)
+        #             # wandb_image = wandb.Image(image)
                     
-                    # table_row.append(wandb_image)
-                ims_dict[label] = image_numpy
-                mlflow.log_image(image_numpy, label + ".png")
+        #             # table_row.append(wandb_image)
+        #         ims_dict[label] = image_numpy
+        #         mlflow.log_image(image_numpy, label + ".png")
                 
                 
             if epoch != self.current_epoch:
@@ -177,7 +177,7 @@ class Visualizer():
         #         # self.wandb_run.log({"Result": result_table})
 
 
-    def plot_current_losses(self, epoch, losses):
+    def plot_current_losses(self, epoch, losses, item):
         """display the current losses on visdom display: dictionary of error labels and values
 
         Parameters:
@@ -186,4 +186,16 @@ class Visualizer():
             losses (OrderedDict)  -- training losses stored in the format of (name, float) pairs
         """
         if self.use_wandb:
-            self.wandb_run.log(losses)
+            if item == 'value':
+                self.wandb_run.log(losses)  
+            elif item == 'list':
+                # print(losses)
+                
+                import matplotlib.pyplot as plt
+                for label, loss in losses.items():
+                    plt.plot(loss.detach().cpu().numpy())
+                    self.wandb_run.log({label:plt})
+
+                
+        #         wandb.log({"sin(x)": wandb.plot.line(y=y1, title="Sin(x) and Cos(x)", xaxis="Index", yaxis="sin(x)"),
+        #    "cos(x)": wandb.plot.line(y=y2, title="Sin(x) and Cos(x)", xaxis="Index", yaxis="cos(x)")})

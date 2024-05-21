@@ -22,6 +22,8 @@ class Scheduler:
         self.ratio_list             = None
         self.black_area_pixels      = None
         
+        # self.random      = torch.FloatTensor(1,3,self.height,self.width).uniform_(-1.0, +1.0)
+        
     def update_ddpm_num_steps(self, max_time):
         """
         Update new time list according to time scheduler.
@@ -485,13 +487,34 @@ class Scheduler:
         return degrade_img, degrade_mask, mean_mask
     
     
-    def get_schedule_shift_time(self, timesteps: torch.IntTensor) -> torch.FloatTensor:
+    def get_schedule_shift_time(self, timesteps: torch.IntTensor, binarymasks: torch.Tensor) -> torch.FloatTensor:
+        """
+        1-d shift
+        """
         # random      = torch.FloatTensor(len(timesteps)).uniform_(-1.0, +1.0)
-        random      = torch.FloatTensor(len(timesteps),3,self.height,self.width).uniform_(-1.0, +1.0)
+        
+        """
+        1-d shift -> not using broadcasting
+        # """
+        # random      = torch.ones(len(timesteps),3,self.height,self.width)
+        # if random.shape[0] == 1:
+        #     random      = random * torch.FloatTensor(len(timesteps)).uniform_(-1.0, +1.0)
+        # else:
+        #     random      = random * torch.FloatTensor(len(timesteps),1,1,1).uniform_(-1.0, +1.0)
+            
+        """
+        image-dimension noise shift
+        """
+        # random      = torch.FloatTensor(len(timesteps),1,self.height,self.width).uniform_(-1.0, +1.0) 
+        random      = torch.FloatTensor(len(timesteps),1,self.height,self.width).normal_(mean=10, std=1)
+        
+        
+        # random      = self.random.repeat(len(timesteps), 1, 1, 1).to(timesteps.device)
         random      = random.to(timesteps.device)
         timesteps   = timesteps.int()
         
         ratio       = torch.index_select(self.ratio_list.to(timesteps.device), 0, timesteps-1)
+        # ratio       = 1
         
         try:
             shift_time  = random * ratio
@@ -503,6 +526,11 @@ class Scheduler:
         # reverse_ratio   = torch.index_select(torch.flip(self.ratio_list, [0]).to(timesteps.device), 0, timesteps-1)
         # shift_time  = random * reverse_ratio
         shift_time  = shift_time.to(self.args.weight_dtype)
+        shift_time  = shift_time * (1-binarymasks)  # shift only degraed area
+        # shift_time  = shift_time * binarymasks    # shift only non-degraded area
+        
+        # shift_time  = shift_time - shift_time.mean() # make mask mean to zero
+        
         return shift_time
     
     

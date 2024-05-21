@@ -16,6 +16,8 @@ def DatasetUtils(data_path: str, data_name: str, data_set: str, data_height: int
         torchvision.transforms.ToTensor(),
         # torchvision.transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
         torchvision.transforms.Lambda(lambda t: (t - torch.mean(t)) / torch.std(t)), # mean 0, std 1
+        # torchvision.transforms.Lambda(lambda t: (t - torch.mean(t))), # mean 0
+        
         ])
     transform_GRAY = torchvision.transforms.Compose([ 
         torchvision.transforms.Resize([data_height, data_width]),
@@ -261,12 +263,26 @@ def DatasetUtils(data_path: str, data_name: str, data_set: str, data_height: int
             dataset.data    = dataset.data[idx_label]
             dataset.targets = dataset.targets[idx_label]
             
+            
+    # ======================================================================
+    # Celeba_hq
+    # ======================================================================
+    if data_name.lower() == 'celeba_hq':
+        path        = join(data_path, data_name, data_set)
+        dataset     = torchvision.datasets.ImageFolder(root=path, transform=transform_RGB)
+        
+            
     # ======================================================================
     # Metfaces 
     # ======================================================================
     elif data_name.lower() == 'metfaces':
         path        = join(data_path, data_name, data_set)
         dataset     = torchvision.datasets.ImageFolder(root=path, transform=transform_RGB)
+        
+    elif data_name == 'metface-N128':
+        path        = join(data_path, data_name, data_set)
+        dataset     = torchvision.datasets.ImageFolder(root=path, transform=transform_RGB)
+        
         
     # ======================================================================
     # afhqv2
@@ -293,9 +309,6 @@ def DatasetUtils(data_path: str, data_name: str, data_set: str, data_height: int
         else:
             assert False, "data_set must be either 'train' or 'test' or 'all'"
         
-    return dataset
-            
-            
     if data_subset:
         dataset = Subset(dataset, list(range(0,data_subset_num)))
 

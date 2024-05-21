@@ -29,6 +29,7 @@ class Trainer:
     def __init__(self,
         args,
         dataloader,
+        dataset,
         model,
         ema_model,
         optimizer,
@@ -37,6 +38,7 @@ class Trainer:
         ):
         self.args               = args
         self.dataloader         = dataloader
+        self.dataset            = dataset
         self.model              = model
         self.ema_model          = ema_model
         self.optimizer          = optimizer
@@ -47,15 +49,14 @@ class Trainer:
         self.criterion          = nn.MSELoss()
         
         self.Scheduler          = Scheduler(args)
-        self.Sampler            = Sampler(self.dataloader, self.args, self.Scheduler)
+        self.Sampler            = Sampler(self.dataset, self.args, self.Scheduler)
         
         self.global_step        = 0
         
-        self.train_visual_names     = ['input', 'degraded_img', 'degrade_binary_masks', 'degradation_mask', 'mean_pixel', 'shifted_degrade_img', 'reconstructed_img', 'inverse_shift_reconstructed_img', 'mask']
-        self.sample_visual_names    = [ 'ema_sample_result_normalize_global', 'ema_sample_result_normalize_local']
+        self.train_visual_names         = ['input', 'degraded_img', 'degrade_binary_masks', 'degradation_mask', 'mean_pixel', 'shift', 'shifted_degrade_img', 'reconstructed_img', 'inverse_shift_reconstructed_img', 'mask']
+        self.sample_visual_names        = [ 'ema_sample_result_normalize_global', 'ema_sample_result_normalize_local']
         
-        
-        self.loss_names         = ['inverse_reconstruct_train_mean', 'reconstruct_train_mean', 'shifted_degrade_img_mean', 'degraded_train_mean']
+        self.loss_names         = ['train_loss', 'inverse_reconstruct_train_mean', 'reconstruct_train_mean', 'shifted_degrade_img_mean', 'degraded_train_mean']
         
         # self.mean_names         = ['sample_mean', 'sample_t_mean', 'sample_0_mean', 'ema_sample_mean', 'ema_sample_t_mean', 'ema_sample_0_mean', 'ema_sample_trained_t_shift_list', 'ema_sample_trained_x_0_shift_list']
         self.mean_names         = ['ema_sample_mean']
@@ -100,17 +101,18 @@ class Trainer:
         # ===================================================================================
         # shift 
         # ===================================================================================
-        shift                       = self.Scheduler.get_schedule_shift_time(timesteps) 
-        self.shifted_degrade_img    = self.Scheduler.perturb_shift(self.degraded_img, shift)
+        self.shift                  = self.Scheduler.get_schedule_shift_time(timesteps, self.degrade_binary_masks) 
+        self.shifted_degrade_img    = self.Scheduler.perturb_shift(self.degraded_img, self.shift)
         
         # ===================================================================================
         # reconstruct and train 
         # ===================================================================================
         with self.accelerator.accumulate(self.model):
             self.mask               = self.model(self.shifted_degrade_img, timesteps).sample
+            
             self.reconstructed_img  = self.shifted_degrade_img + self.mask
             
-            self.inverse_shift_reconstructed_img    = self.Scheduler.perturb_shift_inverse(self.reconstructed_img, shift)
+            self.inverse_shift_reconstructed_img    = self.Scheduler.perturb_shift_inverse(self.reconstructed_img, self.shift)
             
             if self.args.loss_weight_use:
                 weight_loss_timesteps = self.Scheduler.get_weight_timesteps(timeindex, self.args.loss_weight_power_base)
@@ -139,6 +141,7 @@ class Trainer:
                 self.ema_model.step(self.model.parameters())
             self.global_step += 1
         
+        self.train_loss                     = self.reconstruct_loss.mean()
         self.inverse_reconstruct_train_mean = self.inverse_shift_reconstructed_img.mean()
         self.reconstruct_train_mean         = self.reconstructed_img.mean()
         self.shifted_degrade_img_mean       = self.shifted_degrade_img.mean()
@@ -147,6 +150,14 @@ class Trainer:
         self.learning_rate  = self.lr_scheduler.get_last_lr()[0]
         self.lr_list.append(self.learning_rate)
         self.accelerator.wait_for_everyone()
+        
+        
+        
+        if self.accelerator.is_main_process and visualizer is not None:
+            visualizer.plot_current_losses(epoch, self.get_current_losses(), 'value')
+        
+        
+        
         
         return self.reconstruct_loss.item()
 
@@ -198,17 +209,17 @@ class Trainer:
             end = timer()
             elapsed_time = end - start
             if self.accelerator.is_main_process:
-                # loss_mean       = statistics.mean(loss)
+                loss_mean       = statistics.mean(loss)
                 # loss_std        = statistics.stdev(loss, loss_mean)
-                # reconstruct_loss    = loss_mean
                 
-                # loss_mean_epoch.append(loss_mean)
+                loss_mean_epoch.append(loss_mean)
                 # loss_std_epoch.append(loss_std)
                 
                 if epoch > 0 and (epoch+1) % self.args.save_images_epochs == 0 or epoch == (epoch_start+epoch_length-1) or (epoch+1) % (epoch_length / self.args.scheduler_num_scale_timesteps) == 0:
     
                     # self._save_model(dirs, epoch)
                     # self._save_sample(dirs, epoch)
+                    self._save_learning_curve(dirs, loss_mean_epoch, loss_std_epoch)
                     if self.args.use_ema:
                         if self.args.sampling == 'base':
                             self._save_ema_sample(dirs, epoch)
@@ -216,16 +227,44 @@ class Trainer:
                             self._save_ema_momentum_sample(dirs, epoch)
                     # save to wandb
                     if visualizer is not None:
-                        visualizer.display_current_results(self.get_current_visuals(), epoch)
-                        means = self.get_current_mean()
-                        visualizer.plot_current_losses(epoch, means)
+                        visualizer.display_current_results(epoch, self.get_current_visuals(epoch))
+                        visualizer.plot_current_losses(epoch, self.get_current_mean(), 'value')
+                        # visualizer.plot_current_losses(epoch, self.get_current_losses(), 'value')
+                    
+                    save_path   = os.path.join(dirs.list_dir['checkpoint'], f"checkpoint-epoch-{epoch}")
+                    self.accelerator.save_state(save_path)
             
             epoch_progress_bar.update(1)
         
         epoch_progress_bar.close()
         
+        
+    def _save_learning_curve(self, dirs, loss_mean, loss_std):
+        dir_save    = dirs.list_dir['train_loss'] 
+        # file_loss = 'loss_epoch_{:05d}.png'.format(epoch)
+        file_loss = 'loss.png'
+        file_loss = os.path.join(dir_save, file_loss)
+        fig = plt.figure(figsize=(24, 8))
+        
+        plt.subplot(1,3,1)
+        plt.plot(np.array(loss_mean), color='red')
+        # plt.fill_between(list(range(len(loss_mean))), np.array(loss_mean)-np.array(loss_std), np.array(loss_mean)+np.array(loss_std), color='blue', alpha=0.2)
+        plt.title('loss')
+        
+        plt.subplot(1,3,2)
+        plt.plot(np.array(self.lr_list), color='red')
+        plt.title('learning rate')
+        
+        plt.subplot(1,3,3)
+        plt.plot(np.array(self.Scheduler.get_black_area_num_pixels_all()), color='red')
+        plt.title('degrade black area num = {}'.format(len(self.Scheduler.get_black_area_num_pixels_all())))
+        
+        plt.tight_layout()
+        plt.savefig(file_loss, bbox_inches='tight', dpi=100)
+        plt.close(fig)
+        
     
-    def get_current_visuals(self):
+    def get_current_visuals(self, epoch):
         """Return visualization images. train.py will display these images with visdom, and save the images to a HTML"""
         visual_ret = OrderedDict()
         for name in self.train_visual_names:
@@ -241,6 +280,7 @@ class Trainer:
         for name in self.sample_visual_names:
             if isinstance(name, str):
                 visual_ret[name] = getattr(self, name)
+        
         return visual_ret
     
     
@@ -315,41 +355,21 @@ class Trainer:
         self.ema_sample_0_shift_mean    = ema_sample_shift_list.mean()
         
         file_ema_save                       = 'ema_sample_{:05d}.png'.format(epoch)
-        self.ema_sample_result              = self.Sampler._save_image_grid(ema_sample, dir_sample_save, file_ema_save)
         
         nrow = int(np.ceil(np.sqrt(ema_sample_list.shape[1])))
-        self.ema_sample_trained_x_0_list        = self.Sampler._save_multi_index_image_grid(ema_sample_list, nrow=nrow, option='skip_first')
-        self.ema_sample_trained_t_list          = self.Sampler._save_multi_index_image_grid(ema_t_list, nrow=nrow)
-        self.ema_sample_trained_mask_list       = self.Sampler._save_multi_index_image_grid(ema_mask_list, nrow=nrow)
-        self.ema_sample_trained_t_shift_list    = self.Sampler._save_multi_index_image_grid(ema_sample_t_shift_list, nrow=nrow, option='skip_first')
-        self.ema_sample_trained_x_0_shift_list  = self.Sampler._save_multi_index_image_grid(ema_sample_shift_list, nrow=nrow, option='skip_first')
+        # self.ema_sample_trained_x_0_list        = self.Sampler._save_multi_index_image_grid(ema_sample_list, nrow=nrow, option='skip_first')
+        # self.ema_sample_trained_t_list          = self.Sampler._save_multi_index_image_grid(ema_t_list, nrow=nrow)
+        # self.ema_sample_trained_mask_list       = self.Sampler._save_multi_index_image_grid(ema_mask_list, nrow=nrow)
+        # self.ema_sample_trained_t_shift_list    = self.Sampler._save_multi_index_image_grid(ema_sample_t_shift_list, nrow=nrow, option='skip_first')
+        # self.ema_sample_trained_x_0_shift_list  = self.Sampler._save_multi_index_image_grid(ema_sample_shift_list, nrow=nrow, option='skip_first')
         
         
-        dir_save    = dirs.list_dir['train_loss'] 
-        file_loss = 'ema_sample_back_values.png'
-        file_loss = os.path.join(dir_save, file_loss)
-        fig = plt.figure(figsize=(24, 8))
+        self.ema_sample_result_normalize_global = self.Sampler._save_image_grid(ema_sample, normalization='global')
+        self.ema_sample_result_normalize_local  = self.Sampler._save_image_grid(ema_sample, normalization='image')
         
-        ax1 = fig.add_subplot(131)
-        colors = np.random.rand(self.args.sample_num, 3)
-        for i in range(self.args.sample_num):
-            ax1.plot(ema_sample_back_values[i].numpy(), color=colors[i])
-        ax1.title.set_text('ema_sample_back_values')
-        
-        ax2 = fig.add_subplot(132)
-        ax2.plot(ema_t_list[0][1:,:,:,:].mean(dim=(1,2,3)).numpy(), color='r')
-        ax2.plot(ema_sample_t_shift_list[0][1:,:,:,:].mean(dim=(1,2,3)).numpy(), color='b')
-        ax2.title.set_text('ema_sample_t_mean_1_img')
-        
-        ax3 = fig.add_subplot(133)
-        ax3.plot(ema_sample_list[0][1:,:,:,:].mean(dim=(1,2,3)).numpy(), color='r')
-        ax3.plot(ema_sample_shift_list[0][1:,:,:,:].mean(dim=(1,2,3)).numpy(), color='b')
-        ax3.title.set_text('ema_sample_0_mean_1_img')
-        
-        
-        plt.tight_layout()
-        plt.savefig(file_loss, bbox_inches='tight', dpi=100)
-        plt.close(fig)
+        # ema_sample_nearest_neighbor             = self.Sampler.get_nearest_neighbor(ema_sample)
+        # self.ema_sample_nearest_neighbor_global = self.Sampler._save_image_grid(ema_sample_nearest_neighbor, normalization='global')
+        # self.ema_sample_nearest_neighbor_local  = self.Sampler._save_image_grid(ema_sample_nearest_neighbor, normalization='image')
 
 
     def _save_ema_momentum_sample(self, dirs, epoch):
@@ -369,6 +389,10 @@ class Trainer:
         file_ema_save                           = 'ema_sample_{:05d}.png'.format(epoch)
         self.ema_sample_result_normalize_global = self.Sampler._save_image_grid(sample, normalization='global')
         self.ema_sample_result_normalize_local  = self.Sampler._save_image_grid(sample, normalization='image')
+        
+        # ema_sample_nearest_neighbor             = self.Sampler.get_nearest_neighbor(sample)
+        # self.ema_sample_nearest_neighbor_global = self.Sampler._save_image_grid(ema_sample_nearest_neighbor, normalization='global')
+        # self.ema_sample_nearest_neighbor_local  = self.Sampler._save_image_grid(ema_sample_nearest_neighbor, normalization='image')
         
 
 

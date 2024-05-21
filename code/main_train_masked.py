@@ -35,6 +35,7 @@ from trainer_masked_mean_shift import Trainer as MeanShiftTrainer
 from tester import Tester as Tester
 
 import utils.model as models
+from utils.mydataset import MyDataset
 import utils.datasetutils as datasetutils
 import utils.datasetutilsHugging as datasetHugging
 import utils.dirutils as dirutils
@@ -42,14 +43,14 @@ import utils.dirutils as dirutils
 # data_loader._PYTORCH_DATALOADER_KWARGS["shuffle"] = True
 
 def get_dataset(data_path: str, data_name: str, data_set: str,  data_height: int, data_width: int, data_subset: bool, data_subset_num: int, method: str):
-    
     if 'hugging' in data_path:
         # datset using huggingface
         dataset = datasetHugging.DatasetUtils(data_path, data_name, data_set, data_height, data_width, data_subset, data_subset_num, method)
         # dataset = datasetutils.DatasetUtils(data_path, data_name, data_set, data_height, data_width, data_subset, data_subset_num)
     else:
         # dataset using torch
-        dataset = datasetutils.DatasetUtils(data_path, data_name, data_set, data_height, data_width, data_subset, data_subset_num)
+        # dataset = datasetutils.DatasetUtils(data_path, data_name, data_set, data_height, data_width, data_subset, data_subset_num)
+        dataset = MyDataset(data_path, data_name, data_height, split='train', data_subset=data_subset, num_data=data_subset_num)
     
     return dataset
  
@@ -280,7 +281,7 @@ def main(dirs: dict, args: dict):
             visualizer  = None
     else:
         visualizer  = None
-    
+        
     if args.resume_from_checkpoint != 'False':
         if args.method.lower() != 'test':
             global_step, first_epoch, resume_step   = resume_train(args, accelerator, num_update_steps_per_epoch, dirs)
@@ -325,6 +326,7 @@ if __name__ == '__main__':
     parser.add_argument('--date', help='date of the program execution', type=str, default='')
     parser.add_argument('--time', help='time of the program execution', type=str, default='')
     parser.add_argument('--method', help='algorithm of code', type=str, default='base')
+    parser.add_argument('--test_method', help='algorithm of code', type=str, default='base')
     parser.add_argument('--title', help='title of experiment', type=str, default='')
     # ======================================================================
     parser.add_argument('--model', help='name of the neural network', type=str, default='default')
@@ -358,7 +360,7 @@ if __name__ == '__main__':
     parser.add_argument('--mean_value_accumulate', type=eval, default=False, choices=[True, False])
     # ======================================================================
     parser.add_argument("--sampling", type=str, default="base")
-    parser.add_argument("--momentum_adaptive", type=str, default="base_momentum", choices=['base_momentum', 'momentum'])
+    parser.add_argument("--momentum_adaptive", type=str, default="base_momentum", choices=['base_momentum', 'momentum', 'boosting'])
     parser.add_argument('--adaptive_decay_rate', type=float, default=0.999)
     parser.add_argument('--adaptive_momentum_rate', type=float, default=0.9)
     parser.add_argument("--sampling_mask_dependency", help='dependcy of degradation mask between t', type=str, default="independent", choices=['dependent', 'independent', 'dependent_in_t'])

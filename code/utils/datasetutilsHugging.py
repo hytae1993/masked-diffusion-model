@@ -6,10 +6,11 @@ from os import walk
 from os.path import join
 from torch.utils.data import DataLoader, Subset
 from pathlib import Path
-import datasets
-from datasets import load_dataset, concatenate_datasets, load_dataset_builder
-import albumentations
-import albumentations.pytorch
+try:
+    import datasets
+    from datasets import load_dataset, concatenate_datasets, load_dataset_builder
+except ModuleNotFoundError:
+    pass
 import numpy as np
 import re
 from PIL import Image
@@ -50,11 +51,6 @@ from PIL import Image
 def DatasetUtils(data_path: str, data_name: str, data_set: str, data_height: int, data_width: int, data_subset: bool, data_subset_num: int, method: str):
     datasets.config.DOWNLOADED_DATASETS_PATH = Path(data_path)
     
-    transform_Gray      =   albumentations.Compose([
-                        albumentations.Resize(data_width, data_height), 
-                        albumentations.pytorch.transforms.ToTensorV2(),
-                        ])
-    
     
     transform_meanGray = torchvision.transforms.Compose([ 
                         torchvision.transforms.Resize([data_height, data_width]),
@@ -63,13 +59,22 @@ def DatasetUtils(data_path: str, data_name: str, data_set: str, data_height: int
                                                             std=[0.229]),
                         ])
     
-    transform_RGB       =   albumentations.Compose([
-                        albumentations.Resize(data_width, data_height), 
+    # transform_RGB       =   albumentations.Compose([
+    #                     albumentations.Resize(data_width, data_height), 
+    #                     # albumentations.RandomCrop(width=256, height=256),
+    #                     # albumentations.HorizontalFlip(p=0.5),
+    #                     # albumentations.RandomBrightnessContrast(p=0.2),
+    #                     # albumentations.Normalize(mean= (0.485, 0.456, 0.406), std= (0.229,0.224, 0.225)),
+    #                     albumentations.pytorch.transforms.ToTensorV2(),
+    #                     ])
+    
+    transform_RGB       =   torchvision.transforms.Compose([
+                        torchvision.transforms.Resize([data_width, data_height]), 
                         # albumentations.RandomCrop(width=256, height=256),
                         # albumentations.HorizontalFlip(p=0.5),
                         # albumentations.RandomBrightnessContrast(p=0.2),
                         # albumentations.Normalize(mean= (0.485, 0.456, 0.406), std= (0.229,0.224, 0.225)),
-                        albumentations.pytorch.transforms.ToTensorV2(),
+                        torchvision.transforms.ToTensor(),
                         ])
     
     
@@ -125,7 +130,8 @@ def DatasetUtils(data_path: str, data_name: str, data_set: str, data_height: int
     elif data_name.lower() == 'metfaces':
         
         def transforms_Metfaces(examples):
-            images  = [transform_RGB(image=np.array(image))["image"] for image in examples["image"]]
+            # images  = [transform_RGB(image=np.array(image))["image"] for image in examples["image"]]
+            images  = [transform_RGB(image) for image in examples["image"]]
             return {"image": images}
         
         # dataset = load_dataset_builder("huggan/metfaces", cache_dir=data_path)

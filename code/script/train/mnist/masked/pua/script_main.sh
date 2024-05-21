@@ -1,8 +1,9 @@
 #!/bin/bash        
 
 # ==============================
+use_wandb=True
 task="train"
-content="code_test"
+content="code_progress"
 dir_work="/nas/users/hyuntae/code/doctor/masked-diffusion-model"
 dir_dataset="/nas2/dataset/hyuntae/huggingface"
 data_name="mnist"
@@ -13,37 +14,42 @@ data_subset_num=2000
 date=""
 time=""
 method="base"
-title="time_step_1000_withoutClipp"
+title="linear_time_64_mean_non_degraded_area_differenceSampling(independent)_mnist"
 # ==============================
 model=default
+batch_size=128
 in_channel=1
 out_channel=1
-batch_size=128
 num_epochs=10000
 optim="adam"
-lr=1e-4
+lr=5e-4
 lr_scheduler="cosine"
-lr_warmup_steps=500
-lr_cycle=0.5
+lr_warmup_steps=0
+lr_cycle=100.5
 gradient_accumulation_steps=1
-sample_num=100
-sample_epoch_ratio=0.2
-resume_from_checkpoint=False
-num_workers=4
+mixed_precision="no"
+# ==============================
 use_ema=True
 ema_inv_gamma=1.0
 ema_power=0.75
 ema_max_decay=0.9999
-
-
-
-mixed_precision="fp16"
-ddpm_num_steps=1000
-ddpm_schedule="log_scale"
+loss_weight_use=False
+loss_weight_power_base=10.0
+loss_space="x_0"
+ddpm_num_steps=64
+ddpm_schedule="linear"
+scheduler_num_scale_timesteps=1
+sampling="momentum"
+sampling_mask_dependency="independent"
+mean_option="non_degraded_area"
+mean_value_accumulate=False
+# ==============================
+sample_num=100
+sample_epoch_ratio=0.2
+resume_from_checkpoint=False
+num_workers=8
 checkpointing_steps=1000
 save_images_epochs=1000
-save_images_batch=100
-save_loss=1
 
 
 # ==============================
@@ -64,6 +70,7 @@ for iter in ${list_iter[@]}
 do 
     echo "${hostname}.${task}.${data_name}.${time_stamp}.log"
     python -u -m accelerate.commands.launch --config_file '/nas/users/hyuntae/code/doctor/masked-diffusion-model/code/script/train/config/gpuMulti_config.yaml' ${code} \
+        --use_wandb=${use_wandb} \
         --task=${task} \
         --content=${content} \
         --dir_work=${dir_work} \
@@ -102,7 +109,11 @@ do
         --ddpm_schedule=${ddpm_schedule} \
         --checkpointing_steps=${checkpointing_steps} \
         --save_images_epochs=${save_images_epochs} \
-        --save_images_batch=${save_images_batch} \
-        --save_loss=${save_loss} \
+        --scheduler_num_scale_timesteps=${scheduler_num_scale_timesteps} \
+        --mean_value_accumulate=${mean_value_accumulate} \
+        --mean_option=${mean_option} \
+        --sampling_mask_dependency=${sampling_mask_dependency} \
+        --sampling=${sampling} \
+        --loss_space=${loss_space} \
         # > ${hostname}.${task}.${data_name}.${time_stamp}.log
 done

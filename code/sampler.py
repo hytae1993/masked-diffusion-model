@@ -279,6 +279,7 @@ class Sampler:
     def _sample_mean_shift_momentum(self, model: Module, timesteps_used_epoch):
         latent                      = self._get_latent_initial(model)
         sample_t                    = latent.to(model.device)
+        degrade_mask_t              = torch.zeros(self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size).to(model.device)
         
         with torch.no_grad():
             sample_progress_bar = tqdm(total=len(timesteps_used_epoch), leave=False)
@@ -295,7 +296,7 @@ class Sampler:
                 time    = torch.Tensor([t])
                 time    = time.expand(self.args.sample_num).to(model.device)
                 
-                shift               = self.Scheduler.get_schedule_shift_time(time) 
+                shift               = self.Scheduler.get_schedule_shift_time(time, degrade_mask_t) 
                 shifted_sample_t    = self.Scheduler.perturb_shift(sample_t, shift)
                 mask                = model(shifted_sample_t, time).sample
                 shifted_sample_0    = shifted_sample_t + mask # x`_0

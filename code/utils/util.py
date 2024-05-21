@@ -2,7 +2,12 @@ import torch
 import numpy as np
 from PIL import Image
 import os
+
+import torch.nn as nn
 from torchvision.utils import make_grid
+from torchvision import transforms
+from torch.utils.data import Dataset, DataLoader
+
 from utils.datautils import normalize01
 
 
@@ -32,7 +37,11 @@ def tensor2im(input_image, imtype=np.uint8):
         
     else:  # if it is a numpy array, do nothing
         image_numpy = input_image
-    return image_numpy.astype(imtype)
+    image_numpy.astype(imtype)
+    
+
+    img = Image.fromarray(image_numpy)
+    return img
 
 
 def diagnose_network(net, name='network'):

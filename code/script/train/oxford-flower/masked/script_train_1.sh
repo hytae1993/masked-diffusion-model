@@ -2,7 +2,7 @@
 
 # ==============================
 task="train"
-content="masked_diffusion"
+content="code_test"
 dir_work="/nas/users/hyuntae/code/doctor/masked-diffusion-model"
 dir_dataset="/nas2/dataset/hyuntae"
 data_name="oxford-flower"
@@ -10,11 +10,11 @@ data_set="train"
 data_size=64
 date=""
 time=""
-title="time_step_100_lr_constant"
+title="time_step_100_modelRatio"
 # ==============================
 model=default
-batch_size=16
-num_epochs=100
+batch_size=48
+num_epochs=1000
 optim="adam"
 lr=1e-4
 lr_scheduler="cosine"

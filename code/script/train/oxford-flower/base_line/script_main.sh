@@ -39,6 +39,8 @@ save_images_batch=100
 save_loss=1
 ddpm_num_inference_steps=1000
 
+device="2"
+
 
 
 # ==============================
@@ -58,7 +60,7 @@ comment
 for iter in ${list_iter[@]}
 do 
     echo "${hostname}.${task}.${data_name}.${time_stamp}.log"
-    accelerate launch --mixed_precision="fp16" --multi_gpu ${code} \
+    accelerate launch --mixed_precision="fp16" --config_file '/nas/users/hyuntae/code/doctor/masked-diffusion-model/code/script/train/config/gpuMulti_config.yaml' --multi_gpu ${code} \
         --task=${task} \
         --dir_work=${dir_work} \
         --dir_dataset=${dir_dataset} \
@@ -92,5 +94,6 @@ do
         --save_images_batch=${save_images_batch} \
         --save_loss=${save_loss} \
         --ddpm_num_inference_steps=${ddpm_num_inference_steps} \
+        --device=${device} \
         # > ${hostname}.${task}.${data_name}.${time_stamp}.log
 done

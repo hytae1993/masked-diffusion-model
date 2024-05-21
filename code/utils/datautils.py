@@ -210,8 +210,13 @@ def normalize_mean(source, target):
 
 def normalize01(data: torch.Tensor):
     batch_size  = data.shape[0]
-    data_max    = torch.amax(data, dim=(1,2,3)).reshape(batch_size,1,1,1)
-    data_min    = torch.amin(data, dim=(1,2,3)).reshape(batch_size,1,1,1)
+    try:
+        data_max    = torch.amax(data, dim=(1,2,3)).reshape(batch_size,1,1,1)
+        data_min    = torch.amin(data, dim=(1,2,3)).reshape(batch_size,1,1,1)
+    except IndexError:
+        data_max    = torch.amax(data, dim=(0,1,2)).reshape(1,1,1)
+        data_min    = torch.amin(data, dim=(0,1,2)).reshape(1,1,1)
+        
     data_norm   = (data - data_min) / (data_max - data_min)
     data_norm   = torch.nan_to_num(data_norm, nan=0.0)
     return data_norm
