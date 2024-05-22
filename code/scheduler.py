@@ -88,7 +88,7 @@ class Scheduler:
             time    = (time-1).int()
         except AttributeError:
             time    = time - 1
-        
+            
         black_area_num_pixles_time = torch.index_select(torch.tensor(self.black_area_pixels, device=time.device), 0, time)
         
         return black_area_num_pixles_time
@@ -487,6 +487,22 @@ class Scheduler:
         return degrade_img, degrade_mask, mean_mask
     
     
+    def degrade_with_mask(self, img, masks, mean_option):
+        if mean_option == 'degraded_area':  # calculate with degraded pixels
+            sum_pixel   = (img * (1-masks)).sum(dim=(2,3), keepdim=True)
+            mean_pixel  = sum_pixel / (1-masks).sum(dim=(2,3), keepdim=True)
+        elif mean_option == 'non_degraded_area':    # calculate with non-degraded area
+            sum_pixel   = (img * masks).sum(dim=(2,3), keepdim=True)
+            mean_pixel  = sum_pixel / (1-masks).sum(dim=(2,3), keepdim=True) * -1
+            mean_pixel[torch.isnan(mean_pixel)] = 0.0
+        elif mean_option == 'difference':
+            pass
+        
+        degrade_img     = ((1-masks) * mean_pixel) + masks * img
+        
+        return degrade_img
+    
+    
     def get_schedule_shift_time(self, timesteps: torch.IntTensor, binarymasks: torch.Tensor) -> torch.FloatTensor:
         """
         1-d shift
@@ -505,23 +521,33 @@ class Scheduler:
         """
         image-dimension noise shift
         """
-        # random      = torch.FloatTensor(len(timesteps),1,self.height,self.width).uniform_(-1.0, +1.0) 
-        random      = torch.FloatTensor(len(timesteps),1,self.height,self.width).normal_(mean=10, std=1)
+        # # random      = torch.FloatTensor(len(timesteps),1,self.height,self.width).uniform_(-1.0, +1.0) 
+        # random      = torch.FloatTensor(len(timesteps),3,self.height,self.width).normal_(mean=10, std=1)
         
         
-        # random      = self.random.repeat(len(timesteps), 1, 1, 1).to(timesteps.device)
-        random      = random.to(timesteps.device)
+        # # random      = self.random.repeat(len(timesteps), 1, 1, 1).to(timesteps.device)
+        # random      = random.to(timesteps.device)
+        # timesteps   = timesteps.int()
+        
+        # ratio       = torch.index_select(self.ratio_list.to(timesteps.device), 0, timesteps-1)
+        # # ratio       = 1
+        
+        # try:
+        #     shift_time  = random * ratio
+        # except RuntimeError:
+        #     ratio       = ratio.unsqueeze(dim=-1).unsqueeze(dim=-1).unsqueeze(dim=-1)
+        #     ratio       = ratio.expand_as(random)
+        #     shift_time  = random * ratio
+            
+            
         timesteps   = timesteps.int()
-        
         ratio       = torch.index_select(self.ratio_list.to(timesteps.device), 0, timesteps-1)
-        # ratio       = 1
+        shift_time  = torch.zeros(len(timesteps), 3, self.height, self.width).to(timesteps.device)
+        for i in range(len(timesteps)):
+            shift_time[i]  = torch.FloatTensor(1,3,self.height,self.width).normal_(mean=10, std=1*ratio[i])
+            
         
-        try:
-            shift_time  = random * ratio
-        except RuntimeError:
-            ratio       = ratio.unsqueeze(dim=-1).unsqueeze(dim=-1).unsqueeze(dim=-1)
-            ratio       = ratio.expand_as(random)
-            shift_time  = random * ratio
+            
             
         # reverse_ratio   = torch.index_select(torch.flip(self.ratio_list, [0]).to(timesteps.device), 0, timesteps-1)
         # shift_time  = random * reverse_ratio
