@@ -329,7 +329,16 @@ class Sampler:
                     black_area_num_next_t       = self.Scheduler.get_black_area_num_pixels_time(next_t)
                     
                     
-                    degraded_t  = self.Scheduler.degrade_with_mask(sample_0, degrade_mask_next_t, mean_option=self.args.mean_option)
+                    degraded_t  = self.Scheduler.degrade_with_mask(sample_0, degrade_mask_next_t, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
+                    
+                    
+                    # if i == (len(timesteps_used_epoch)-1):
+                    #     degraded_t  = torch.zeros(self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size).to(model.device)
+                    #     print("===========================================================")
+                    #     print(sample_t.sum(), sample_0.sum(), degraded_t.sum(), (degraded_t.mean(dim=(2,3)) - sample_0.mean(dim=(2,3))).mean(), degrade_mask_next_t.sum())
+                    #     print(sample_t.mean(), sample_0.mean(), degraded_t.mean())
+                    
+                    
                     degraded_next_t, degrade_mask_next_t, mean_mask_next_t  = self.Scheduler.degrade_index_sampling(index_list, black_area_num_next_t, sample_0, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
                     
                     # if self.args.sampling_mask_dependency == 'independent':
@@ -346,6 +355,7 @@ class Sampler:
                     #     degraded_next_t, degrade_mask_next_t, mean_mask_next_t  = self.Scheduler.degrade_index_sampling(new_index_list, black_area_num_next_t, sample_0, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
                         
                     difference  = sample_t - degraded_t
+                    
                     if self.args.momentum_adaptive == 'base_momentum':
                         """
                         base momenutm sampling: cold diffusion
@@ -374,8 +384,13 @@ class Sampler:
                         momentum    = difference
                         sample_t    = momentum + degraded_next_t
                         
+                        
+                        
+                    sample_t    = sample_t - sample_t.mean()
+                        
                     sample_t_list[len(timesteps_used_epoch) - i]        = sample_t
                     degraded_mask_list[len(timesteps_used_epoch) - i]   = degrade_mask_next_t
+                sample_t    = sample_t - sample_t.mean()
                 
                 sample_progress_bar.update(1)
         sample_progress_bar.close()
@@ -405,7 +420,7 @@ class Sampler:
     
     
     def _save_multi_index_image_grid(self, sample: torch.Tensor, nrow=None, normalization='global', option=None):
-        # sample.shape = batch_size, timesteps, channle, height, width
+        # sample.shape = batch_size, timesteps, channel, height, width
         num_timesteps   = sample.shape[1]
         if nrow == None:
             nrow            = int(np.ceil(np.sqrt(num_timesteps))) 
