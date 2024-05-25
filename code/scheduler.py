@@ -487,16 +487,26 @@ class Scheduler:
         return degrade_img, degrade_mask, mean_mask
     
     
-    def degrade_with_mask(self, img, masks, mean_option):
-        if mean_option == 'degraded_area':  # calculate with degraded pixels
-            sum_pixel   = (img * (1-masks)).sum(dim=(2,3), keepdim=True)
-            mean_pixel  = sum_pixel / (1-masks).sum(dim=(2,3), keepdim=True)
-        elif mean_option == 'non_degraded_area':    # calculate with non-degraded area
-            sum_pixel   = (img * masks).sum(dim=(2,3), keepdim=True)
-            mean_pixel  = sum_pixel / (1-masks).sum(dim=(2,3), keepdim=True) * -1
-            mean_pixel[torch.isnan(mean_pixel)] = 0.0
-        elif mean_option == 'difference':
-            pass
+    def degrade_with_mask(self, img, masks, mean_option, mean_area):
+        try:
+            mean_pixel  = torch.ones(len(masks), img.shape[1], 1, 1).to(img.device) * float(mean_option)
+        except ValueError:
+            if mean_option == 'degraded_area':  # calculate with degraded pixels
+                if mean_area == 'image-wise':
+                    sum_pixel   = (img * (1-masks)).sum(dim=(1,2,3), keepdim=True)
+                    mean_pixel  = sum_pixel / (1-masks).sum(dim=(1,2,3), keepdim=True)
+                    
+                elif mean_area == 'channel-wise':
+                    sum_pixel   = (img * (1-masks)).sum(dim=(2,3), keepdim=True)
+                    mean_pixel  = sum_pixel / (1-masks).sum(dim=(2,3), keepdim=True)
+                
+            elif mean_option == 'non_degraded_area':    # calculate with non-degraded area
+                sum_pixel   = (img * masks).sum(dim=(2,3), keepdim=True)
+                mean_pixel  = sum_pixel / (1-masks).sum(dim=(2,3), keepdim=True) * -1
+                mean_pixel[torch.isnan(mean_pixel)] = 0.0
+                
+            elif mean_option == 'difference':
+                pass
         
         degrade_img     = ((1-masks) * mean_pixel) + masks * img
         
@@ -542,9 +552,9 @@ class Scheduler:
             
         timesteps   = timesteps.int()
         ratio       = torch.index_select(self.ratio_list.to(timesteps.device), 0, timesteps-1)
-        shift_time  = torch.zeros(len(timesteps), 3, self.height, self.width).to(timesteps.device)
+        shift_time  = torch.zeros(len(timesteps), 1, self.height, self.width).to(timesteps.device)
         for i in range(len(timesteps)):
-            shift_time[i]  = torch.FloatTensor(1,3,self.height,self.width).normal_(mean=10, std=1*ratio[i])
+            shift_time[i]  = torch.FloatTensor(1,1,self.height,self.width).normal_(mean=10, std=1*ratio[i])
             
         
             
@@ -556,6 +566,7 @@ class Scheduler:
         # shift_time  = shift_time * binarymasks    # shift only non-degraded area
         
         # shift_time  = shift_time - shift_time.mean() # make mask mean to zero
+        
         
         return shift_time
     
