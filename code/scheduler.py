@@ -531,30 +531,30 @@ class Scheduler:
         """
         image-dimension noise shift
         """
-        # # random      = torch.FloatTensor(len(timesteps),1,self.height,self.width).uniform_(-1.0, +1.0) 
-        # random      = torch.FloatTensor(len(timesteps),3,self.height,self.width).normal_(mean=10, std=1)
+        # random      = torch.FloatTensor(len(timesteps),1,self.height,self.width).uniform_(-1.0, +1.0) 
+        random      = torch.FloatTensor(len(timesteps),3,self.height,self.width).normal_(mean=0, std=1)
         
         
-        # # random      = self.random.repeat(len(timesteps), 1, 1, 1).to(timesteps.device)
-        # random      = random.to(timesteps.device)
-        # timesteps   = timesteps.int()
-        
-        # ratio       = torch.index_select(self.ratio_list.to(timesteps.device), 0, timesteps-1)
-        # # ratio       = 1
-        
-        # try:
-        #     shift_time  = random * ratio
-        # except RuntimeError:
-        #     ratio       = ratio.unsqueeze(dim=-1).unsqueeze(dim=-1).unsqueeze(dim=-1)
-        #     ratio       = ratio.expand_as(random)
-        #     shift_time  = random * ratio
-            
-            
+        # random      = self.random.repeat(len(timesteps), 1, 1, 1).to(timesteps.device)
+        random      = random.to(timesteps.device)
         timesteps   = timesteps.int()
+        
         ratio       = torch.index_select(self.ratio_list.to(timesteps.device), 0, timesteps-1)
-        shift_time  = torch.zeros(len(timesteps), 1, self.height, self.width).to(timesteps.device)
-        for i in range(len(timesteps)):
-            shift_time[i]  = torch.FloatTensor(1,1,self.height,self.width).normal_(mean=10, std=1*ratio[i])
+        # ratio       = 1
+        
+        try:
+            shift_time  = random * ratio
+        except RuntimeError:
+            ratio       = ratio.unsqueeze(dim=-1).unsqueeze(dim=-1).unsqueeze(dim=-1)
+            ratio       = ratio.expand_as(random)
+            shift_time  = random * ratio
+            
+            
+        # timesteps   = timesteps.int()
+        # ratio       = torch.index_select(self.ratio_list.to(timesteps.device), 0, timesteps-1)
+        # shift_time  = torch.zeros(len(timesteps), 3, self.height, self.width).to(timesteps.device)
+        # for i in range(len(timesteps)):
+        #     shift_time[i]  = torch.FloatTensor(1,3,self.height,self.width).normal_(mean=10, std=1*ratio[i])
             
         
             

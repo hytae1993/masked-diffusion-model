@@ -98,6 +98,7 @@ class Trainer:
         black_area_num      = self.Scheduler.get_black_area_num_pixels_time(timesteps)      # get number of removed pixels at each timestep 
         self.degraded_img, self.degrade_binary_masks, self.degradation_mask, self.mean_pixel = self.Scheduler.degrade_training(black_area_num, self.input, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
         
+        
         # ===================================================================================
         # shift 
         # ===================================================================================
@@ -379,7 +380,7 @@ class Trainer:
         # model_ema.parameters => model.parameters
         self.ema_model.copy_to(self.model.parameters())
         
-        sample  = self.Sampler.sample(self.model.eval(), self.timesteps_used_epoch)
+        sample, _  = self.Sampler.sample(self.model.eval(), self.timesteps_used_epoch)
         
         # model_ema.temp => model.parameters
         self.ema_model.restore(self.model.parameters())
