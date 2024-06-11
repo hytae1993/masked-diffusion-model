@@ -131,21 +131,39 @@ class Scheduler:
     
     def get_extract_exponential_random_sublist(self, time_list, ddpm_num_steps):
         if ddpm_num_steps > len(time_list):
-            raise ValueError("Desired to remove number of pixels is greater than the size of input image.")
+            raise ValueError("Desired number of steps is greater than the length of time_list.")
 
-        base    = self.args.ddpm_schedule_base # default 10.0
-        values = [int(base**i) for i in np.linspace(0, np.log(self.image_size), ddpm_num_steps)]
+        # Generate exponential indices
+        exponent_indices = np.linspace(0, 1, ddpm_num_steps)
+        base    = self.args.ddpm_schedule_base # default 4000.0    
+        exponential_indices = base ** exponent_indices
     
-        # Scale values to fit within [1, self.image_size]
-        scaled_values = [1 + int((self.image_size - 1) * (x - min(values)) / (max(values) - min(values))) for x in values]
+        # Normalize exponential indices to fit within the range of time_list
+        max_index = len(time_list) - 1
+        normalized_indices = (exponential_indices / exponential_indices.max()) * max_index
+        rounded_indices = np.round(normalized_indices).astype(int)
+    
+        # Ensure uniqueness and maintain order
+        unique_indices = sorted(set(rounded_indices))
         
-        # Ensure uniqueness and remove duplicates
-        unique_values = list(sorted(set(scaled_values)))
+        # Ensure the minimum value is not zero and is a small value
+        if unique_indices[0] == 0:
+            unique_indices[0] = 1
         
-        black_area_num_pixel    = np.array(unique_values)
+        # Ensure the reduced list has exactly ddpm_num_steps elements
+        while len(unique_indices) < ddpm_num_steps:
+            next_value = unique_indices[-1] + 1
+            if next_value < len(time_list):
+                unique_indices.append(next_value)
+            else:
+                break
+        
+        # Trim excess elements if any
+        unique_indices = unique_indices[:ddpm_num_steps]
+        
+        black_area_num_pixel    = np.array(unique_indices)
         
         return black_area_num_pixel
-    
 
     def get_extract_sigmoid_random_sublist(self, time_list, ddpm_num_steps):
         if ddpm_num_steps > len(time_list):
@@ -307,6 +325,9 @@ class Scheduler:
                 sum_pixel   = (img * masks).sum(dim=(2,3), keepdim=True)
                 mean_pixel  = sum_pixel / (1-masks).sum(dim=(2,3), keepdim=True) * -1
                 mean_pixel[torch.isnan(mean_pixel)] = 0.0
+                
+            elif mean_option == 0:
+                mean_pixel  = torch.ones(len(black_area_num), img.shape[1], 1, 1).to(img.device) * float(mean_option)
 
         
         degrade_img     = ((1-masks) * mean_pixel) + masks * img
@@ -358,6 +379,8 @@ class Scheduler:
                 sum_pixel   = (preserved * mask).sum(dim=(1,2,3), keepdim=True)
                 mean_pixel  = sum_pixel / (1-mask).sum(dim=(1,2,3), keepdim=True) / sample_t.shape[1] * -1
                 mean_pixel[torch.isnan(mean_pixel)] = 0.0
+            elif mean_option == 0:
+                mean_pixel  = torch.ones(self.args.sample_num, mask.shape[1], 1, 1).to(mask.device) * float(mean_option)
             elif mean_option == 'difference':
                 pass
             
@@ -392,6 +415,9 @@ class Scheduler:
                 sum_pixel   = (img * masks).sum(dim=(2,3), keepdim=True)
                 mean_pixel  = sum_pixel / (1-masks).sum(dim=(2,3), keepdim=True) * -1
                 mean_pixel[torch.isnan(mean_pixel)] = 0.0
+                
+            elif mean_option == 0:
+                mean_pixel  = torch.ones(len(black_area_num_t), img.shape[1], 1, 1).to(img.device) * float(mean_option)
                 
             elif mean_option == 'difference':
                 pass
@@ -437,6 +463,9 @@ class Scheduler:
                 sum_pixel   = (img * masks).sum(dim=(2,3), keepdim=True)
                 mean_pixel  = sum_pixel / (1-masks).sum(dim=(2,3), keepdim=True) * -1
                 mean_pixel[torch.isnan(mean_pixel)] = 0.0
+                
+            elif mean_option == 0:
+                mean_pixel  = torch.ones(len(black_area_num_t), img.shape[1], 1, 1).to(img.device) * float(mean_option)
                 
             elif mean_option == 'difference':
                 pass
@@ -505,6 +534,9 @@ class Scheduler:
                 mean_pixel  = sum_pixel / (1-masks).sum(dim=(2,3), keepdim=True) * -1
                 mean_pixel[torch.isnan(mean_pixel)] = 0.0
                 
+            elif mean_option == 0:
+                mean_pixel  = torch.ones(len(masks), img.shape[1], 1, 1).to(img.device) * float(mean_option)
+                
             elif mean_option == 'difference':
                 pass
         
@@ -512,61 +544,115 @@ class Scheduler:
         
         return degrade_img
     
+    # def get_schedule_shift_time(self, timesteps, binarymasks) -> torch. FloatTensor:
+    #     random      = torch.FloatTensor(len(timesteps)).uniform_(-1.0, +1.0)
+    #     random      = random.to(timesteps.device)
+    #     timesteps   = timesteps.int()
+    #     ratio       = torch.index_select(self.ratio_list.to(timesteps.device), 0, timesteps-1)
+        
+    #     shift_time  = random * ratio
+    #     # reverse_ratio   = torch.index_select(torch.flip(self.ratio_list, [0]).to(timesteps.device), 0, timesteps-1)
+    #     # shift_time  = random * reverse_ratio
+    #     shift_time  = shift_time.to(self.args.weight_dtype)
+    #     return shift_time
     
     def get_schedule_shift_time(self, timesteps: torch.IntTensor, binarymasks: torch.Tensor) -> torch.FloatTensor:
-        """
-        1-d shift
-        """
-        # random      = torch.FloatTensor(len(timesteps)).uniform_(-1.0, +1.0)
         
-        """
-        1-d shift -> not using broadcasting
-        # """
-        # random      = torch.ones(len(timesteps),3,self.height,self.width)
-        # if random.shape[0] == 1:
-        #     random      = random * torch.FloatTensor(len(timesteps)).uniform_(-1.0, +1.0)
-        # else:
-        #     random      = random * torch.FloatTensor(len(timesteps),1,1,1).uniform_(-1.0, +1.0)
-            
-        """
-        image-dimension noise shift
-        """
-        # random      = torch.FloatTensor(len(timesteps),1,self.height,self.width).uniform_(-1.0, +1.0) 
-        random      = torch.FloatTensor(len(timesteps),3,self.height,self.width).normal_(mean=0, std=1)
-        
-        
-        # random      = self.random.repeat(len(timesteps), 1, 1, 1).to(timesteps.device)
-        random      = random.to(timesteps.device)
         timesteps   = timesteps.int()
         
-        ratio       = torch.index_select(self.ratio_list.to(timesteps.device), 0, timesteps-1)
-        # ratio       = 1
-        
-        try:
+        if self.args.shift_type == 'constant':
+            """
+            1-d shift
+            """
+            random      = torch.FloatTensor(len(timesteps)).uniform_(-1.0, +1.0)
+            random      = random.to(timesteps.device)
+            timesteps   = timesteps.int()
+            ratio       = torch.index_select(self.ratio_list.to(timesteps.device), 0, timesteps-1)
+            
             shift_time  = random * ratio
-        except RuntimeError:
-            ratio       = ratio.unsqueeze(dim=-1).unsqueeze(dim=-1).unsqueeze(dim=-1)
-            ratio       = ratio.expand_as(random)
-            shift_time  = random * ratio
+            shift_time  = shift_time.to(self.args.weight_dtype)
+            shift_time  = shift_time[:,None,None,None]
             
+            # """
+            # 1-d shift -> not using broadcasting
+            # # """
+            # random      = torch.ones(len(timesteps),3,self.height,self.width).to(timesteps.device)
+            # ratio       = torch.index_select(self.ratio_list.to(timesteps.device), 0, timesteps-1)
             
-        # timesteps   = timesteps.int()
-        # ratio       = torch.index_select(self.ratio_list.to(timesteps.device), 0, timesteps-1)
-        # shift_time  = torch.zeros(len(timesteps), 3, self.height, self.width).to(timesteps.device)
-        # for i in range(len(timesteps)):
-        #     shift_time[i]  = torch.FloatTensor(1,3,self.height,self.width).normal_(mean=10, std=1*ratio[i])
-            
+            # if random.shape[0] == 1:
+            #     random      = random * torch.FloatTensor(len(timesteps)).uniform_(-1.0, +1.0).to(timesteps.device)
+            # else:
+            #     random      = random * torch.FloatTensor(len(timesteps),1,1,1).uniform_(-1.0, +1.0).to(timesteps.device)
+                
+            # try:
+            #     shift_time  = random * ratio
+            # except RuntimeError:
+            #     ratio       = ratio[:,None,None,None]
+            #     ratio       = ratio.expand_as(random)
+            #     shift_time  = random * ratio
+                
         
+        elif self.args.shift_type == 'noise_reduction':
+            """
+            image-dimension noise shift
+            reduce both mean and std according to timestep 
+            """
+            # random      = torch.FloatTensor(len(timesteps),1,self.height,self.width).uniform_(-1.0, +1.0) 
+            random      = torch.FloatTensor(len(timesteps),1,self.height,self.width).normal_(mean=self.args.noise_mean, std=1).to(timesteps.device)
+            ratio       = torch.index_select(self.ratio_list.to(timesteps.device), 0, timesteps-1)
+            # ratio       = 1
             
+            try:
+                shift_time  = random * ratio
+            except RuntimeError:
+                ratio       = ratio[:,None,None,None]
+                ratio       = ratio.expand_as(random)
+                shift_time  = random * ratio
             
+        elif self.args.shift_type == 'noise_std_reduction':
+            """
+            image-dimension noise shift
+            reduce both std according to timestep 
+            """
+            ratio       = torch.index_select(self.ratio_list.to(timesteps.device), 0, timesteps-1)
+            shift_time  = torch.zeros(len(timesteps), 3, self.height, self.width).to(timesteps.device)
+            for i in range(len(timesteps)):
+                shift_time[i]  = torch.FloatTensor(1,3,self.height,self.width).normal_(mean=self.args.noise_mean, std=1*ratio[i])
+                
+        elif self.args.shift_type == 'noise_with_perturbation':
+            """
+            image-dimension noise shift(gaussian distribution) and constant shift(uniform distribution)
+            """
+            perturbation    = torch.ones(len(timesteps),3,self.height,self.width).to(timesteps.device)
+            
+            if perturbation.shape[0] == 1:
+                perturbation    = perturbation * torch.FloatTensor(len(timesteps)).uniform_(-1.0, +1.0).to(timesteps.device)
+            else:
+                perturbation    = perturbation * torch.FloatTensor(len(timesteps),1,1,1).uniform_(-1.0, +1.0).to(timesteps.device)
+                
+            random      = torch.FloatTensor(len(timesteps),3,self.height,self.width).normal_(mean=self.args.noise_mean, std=1).to(timesteps.device)
+            shift_time  = perturbation + random
+            
+            ratio       = torch.index_select(self.ratio_list.to(timesteps.device), 0, timesteps-1)
+            
+            try:
+                shift_time  = random * ratio
+            except RuntimeError:
+                ratio       = ratio[:,None,None,None]
+                ratio       = ratio.expand_as(random)
+                shift_time  = random * ratio
+                
+        elif self.args.shift_type == 'non_shift':
+            shift_time  = torch.zeros(len(timesteps),3,self.height,self.width).to(timesteps.device)
+            
+                
         # reverse_ratio   = torch.index_select(torch.flip(self.ratio_list, [0]).to(timesteps.device), 0, timesteps-1)
         # shift_time  = random * reverse_ratio
         shift_time  = shift_time.to(self.args.weight_dtype)
-        shift_time  = shift_time * (1-binarymasks)  # shift only degraed area
+        # shift_time  = shift_time * (1-binarymasks)  # shift only degraed area
         # shift_time  = shift_time * binarymasks    # shift only non-degraded area
         
         # shift_time  = shift_time - shift_time.mean() # make mask mean to zero
-        
         
         return shift_time
     

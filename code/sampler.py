@@ -303,6 +303,9 @@ class Sampler:
         mask_list                   = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
         shifted_result_list         = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
         sample_0_list               = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
+        difference_list             = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
+        degraded_t_list             = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
+        degraded_next_t_list        = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
         
         
         # print(self.Scheduler.get_black_area_num_pixels_all())
@@ -396,7 +399,10 @@ class Sampler:
                         
                         
                     # sample_t    = sample_t - sample_t.mean()
-                        
+                    
+                    degraded_next_t_list[len(timesteps_used_epoch) - i] = degraded_next_t    
+                    degraded_t_list[len(timesteps_used_epoch) - i]      = degraded_t    
+                    difference_list[len(timesteps_used_epoch) - i]      = difference    
                     sample_t_list[len(timesteps_used_epoch) - i]        = sample_t
                     degraded_mask_list[len(timesteps_used_epoch) - i]   = degrade_mask_next_t
                 # sample_t    = sample_t - sample_t.mean()
@@ -407,7 +413,7 @@ class Sampler:
                 sample_progress_bar.update(1)
         sample_progress_bar.close()
     
-        return sample_0, [sample_t_list, shift_list, shifted_list, mask_list, shifted_result_list, sample_0_list, degraded_mask_list]
+        return sample_0, [sample_t_list, shift_list, shifted_list, mask_list, shifted_result_list, sample_0_list, degraded_mask_list, degraded_t_list, difference_list, degraded_next_t_list]
     
         
     def _save_image_grid(self, sample: torch.Tensor, normalization='global', dir_save=None, file_sample=None):

@@ -87,6 +87,13 @@ class Trainer:
             self.input     = input[0]
 
         self.input      = self.input.to(self.args.weight_dtype)
+        # self.input      = self._shift_mean(self.input)
+        
+        # ===================================================================================
+        # scalr shift of input: for the diversity, accuracy of sampling
+        # ===================================================================================
+        # perturbation    = torch.FloatTensor(self.input.shape[0]).normal_(mean=0, std=0.1).to(self.input.device)
+        # self.input      = self.input + perturbation[:,None,None,None]
         
         # ===================================================================================
         # Create masks with random area black and obtation degraded image
@@ -105,6 +112,7 @@ class Trainer:
         self.shift                  = self.Scheduler.get_schedule_shift_time(timesteps, self.degrade_binary_masks) 
         self.shifted_degrade_img    = self.Scheduler.perturb_shift(self.degraded_img, self.shift)
         
+        
         # ===================================================================================
         # reconstruct and train 
         # ===================================================================================
@@ -120,6 +128,7 @@ class Trainer:
             else:
                 weight_loss_timesteps = None
             
+            # self.reconstruct_loss   = F.mse_loss(self.inverse_shift_reconstructed_img, self.input, reduction="none")
             self.reconstruct_loss   = F.mse_loss(self.inverse_shift_reconstructed_img, self.input, reduction="none")
             
             if weight_loss_timesteps is not None:

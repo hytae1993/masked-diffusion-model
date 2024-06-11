@@ -11,11 +11,11 @@ data_name="celeba_hq"
 data_set="train"
 data_size=64
 data_subset=True
-data_subset_num=128
+data_subset_num=1024
 date=""
 time=""
 method="mean_shift"
-title="adamw_128-image_only-degraded-area_image-noise-1-channel-mean-0_reducing-noise_lr-3e-5_noise-remove_celeba_hq"
+title="all-area-constant-shift_1024-image_input-mean-0_lr-3e-5_celeba_hq"
 # ==============================
 model=default
 batch_size=32
@@ -38,22 +38,24 @@ ema_max_decay=0.9999
 loss_weight_use=False
 loss_weight_power_base=2.0
 loss_space="x_0"
-ddpm_num_steps=8
+ddpm_num_steps=16
 ddpm_schedule="log"
-ddpm_schedule_base=0.5
+ddpm_schedule_base=10.5
 scheduler_num_scale_timesteps=1
 sampling="momentum"
-sampling_mask_dependency="dependent"
+sampling_mask_dependency="independent"
 mean_option="degraded_area"
 mean_area="image-wise"
 mean_value_accumulate=False
+shift_type="constant"
+noise_mean=0
 # ==============================
 sample_num=100
 sample_epoch_ratio=0.2
 resume_from_checkpoint=False
 num_workers=1
 checkpointing_steps=10000
-save_images_epochs=1000
+save_images_epochs=5000
 
 
 # ==============================
@@ -122,6 +124,8 @@ do
         --mean_value_accumulate=${mean_value_accumulate} \
         --mean_option=${mean_option} \
         --mean_area=${mean_area} \
+        --shift_type=${shift_type} \
+        --noise_mean=${noise_mean} \
         --sampling_mask_dependency=${sampling_mask_dependency} \
         --sampling=${sampling} \
         --loss_space=${loss_space} \

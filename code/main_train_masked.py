@@ -358,6 +358,8 @@ if __name__ == '__main__':
     parser.add_argument('--mean_option', default=0)
     parser.add_argument('--mean_area', default='image-wise',choices=['channel-wise', 'image-wise'])
     parser.add_argument('--mean_value_accumulate', type=eval, default=False, choices=[True, False])
+    parser.add_argument('--shift_type', type=str, default='noise_with_perturbation', choices=['constant', 'noise_reduction', 'noise_std_reduction', 'noise_with_perturbation', 'non_shift'])
+    parser.add_argument('--noise_mean', type=float, default=0)
     # ======================================================================
     parser.add_argument("--sampling", type=str, default="base")
     parser.add_argument("--momentum_adaptive", type=str, default="base_momentum", choices=['base_momentum', 'momentum', 'boosting'])
