@@ -46,8 +46,9 @@ class Sampler:
         latent      = torch.zeros(self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
         
         # random      = torch.FloatTensor(self.args.sample_num).normal_(mean=0, std=0.1)
-        # random      = random[:,None,None,None]
-        # latent      = latent + random
+        random      = torch.FloatTensor(self.args.sample_num).uniform_(-0.7, 0.7)    
+        random      = random[:,None,None,None]
+        latent      = latent + random
         
         return latent
     
@@ -328,8 +329,10 @@ class Sampler:
                 time    = torch.Tensor([t])
                 time    = time.expand(self.args.sample_num).to(model.device)
                 
-                shift               = self.Scheduler.get_schedule_shift_time(time, degrade_mask_next_t) 
+                shift               = self.Scheduler.get_schedule_shift_time(time, degrade_mask_next_t, mu) 
                 shifted_sample_t    = self.Scheduler.perturb_shift(sample_t, shift)
+                
+                
                 mask                = model(shifted_sample_t, time).sample
                 shifted_sample_0    = shifted_sample_t + mask # x`_0
                 sample_0            = self.Scheduler.perturb_shift_inverse(shifted_sample_0, shift)
