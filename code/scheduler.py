@@ -89,8 +89,11 @@ class Scheduler:
         except AttributeError:
             time    = time - 1
             
-        black_area_num_pixles_time = torch.index_select(torch.tensor(self.black_area_pixels, device=time.device), 0, time)
-        
+        if self.args.select_degrade_pixel == 'indexing':
+            black_area_num_pixles_time  = torch.index_select(torch.tensor(self.black_area_pixels, device=time.device), 0, time)
+        elif self.args.select_degrade_pixel == 'thresholding':
+            black_area_num_pixles_time  = torch.index_select(torch.tensor(self.ratio_list, device=time.device), 0, time)
+            
         return black_area_num_pixles_time
     
     
@@ -299,12 +302,19 @@ class Scheduler:
         Returns:
         - noisy_img: Input image in which areas to be removed are filled with some value
         """
-        masks = torch.ones((len(black_area_num), self.height*self.width)).to(img.device)
+        if self.args.select_degrade_pixel == 'indexing':
+            masks = torch.ones((len(black_area_num), self.height*self.width)).to(img.device)
+            
+            for i, num in enumerate(black_area_num):
+                masks[i, torch.randperm(self.height*self.width)[:num]] = 0.0
+            masks   = masks.reshape(len(black_area_num), 1, self.height, self.width)
+            masks   = masks.expand_as(img)
         
-        for i, num in enumerate(black_area_num):
-            masks[i, torch.randperm(self.height*self.width)[:num]] = 0.0
-        masks   = masks.reshape(len(black_area_num), 1, self.height, self.width)
-        masks   = masks.expand_as(img)
+        elif self.args.select_degrade_pixel == 'thresholding':
+            masks   = torch.FloatTensor(img.shape[0], self.height*self.width).uniform_(0.0, +1.0).to(img.device)
+            masks   = (masks > black_area_num.unsqueeze(dim=1)).float() * 1
+            masks   = masks.reshape(len(black_area_num), 1, self.height, self.width)
+            masks   = masks.expand_as(img)
                     
         try:
             # mean_pixel = float(mean_option)
@@ -440,12 +450,19 @@ class Scheduler:
         Returns:
         
         """
-        masks   = torch.ones((len(black_area_num_t), self.height*self.width)).to(img.device)
+        if self.args.select_degrade_pixel == 'indexing':
+            masks = torch.ones((len(black_area_num_t), self.height*self.width)).to(img.device)
+            
+            for i, num in enumerate(black_area_num_t):
+                masks[i, torch.randperm(self.height*self.width)[:num]] = 0.0
+            masks   = masks.reshape(len(black_area_num_t), 1, self.height, self.width)
+            masks   = masks.expand_as(img)
         
-        for i, num in enumerate(black_area_num_t):
-            masks[i, torch.randperm(self.height*self.width)[:num]] = 0.0
-        masks   = masks.reshape(len(black_area_num_t), 1, self.height, self.width)
-        masks   = masks.expand_as(img)
+        elif self.args.select_degrade_pixel == 'thresholding':
+            masks   = torch.FloatTensor(img.shape[0], self.height*self.width).uniform_(0.0, +1.0).to(img.device)
+            masks   = (masks > black_area_num_t.unsqueeze(dim=1)).float() * 1
+            masks   = masks.reshape(len(black_area_num_t), 1, self.height, self.width)
+            masks   = masks.expand_as(img)
         
         try:
             mean_pixel  = torch.ones(len(black_area_num_t), img.shape[1], 1, 1).to(img.device) * float(mean_option)

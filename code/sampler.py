@@ -313,7 +313,6 @@ class Sampler:
         # print(timesteps_used_epoch)
         # exit(1)
         
-        
         with torch.no_grad():
             sample_progress_bar = tqdm(total=len(timesteps_used_epoch), leave=False)
             sample_progress_bar.set_description(f"Sampling(momentum sampling)")
@@ -415,7 +414,7 @@ class Sampler:
                 
                 sample_progress_bar.update(1)
         sample_progress_bar.close()
-    
+        
         return sample_0, [sample_t_list, shift_list, shifted_list, mask_list, shifted_result_list, sample_0_list, degraded_mask_list, degraded_t_list, difference_list, degraded_next_t_list]
     
         
