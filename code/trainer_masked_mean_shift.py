@@ -109,7 +109,7 @@ class Trainer:
         # ===================================================================================
         # shift 
         # ===================================================================================
-        self.shift                  = self.Scheduler.get_schedule_shift_time(timesteps, self.degrade_binary_masks) 
+        self.shift                  = self.Scheduler.get_schedule_shift_time(timesteps, self.degrade_binary_masks, self.input.mean(dim=(1,2,3))) 
         self.shifted_degrade_img    = self.Scheduler.perturb_shift(self.degraded_img, self.shift)
         
         

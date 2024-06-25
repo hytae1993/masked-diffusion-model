@@ -46,11 +46,11 @@ class Sampler:
         latent      = torch.zeros(self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
         
         # random      = torch.FloatTensor(self.args.sample_num).normal_(mean=0, std=0.1)
-        random      = torch.FloatTensor(self.args.sample_num).uniform_(-0.7, 0.7)    
+        random      = torch.FloatTensor(self.args.sample_num).uniform_(-1, 1)    
         random      = random[:,None,None,None]
         latent      = latent + random
         
-        return latent
+        return latent, random
     
     
     def sample(self, model: Module, timesteps_used_epoch):
@@ -291,7 +291,7 @@ class Sampler:
     
     
     def _sample_mean_shift_momentum(self, model: Module, timesteps_used_epoch):
-        latent                      = self._get_latent_initial(model)
+        latent, mu                  = self._get_latent_initial(model)
         sample_t                    = latent.to(model.device)
         degrade_mask_t              = torch.zeros(self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size).to(model.device)
         degrade_mask_next_t         = torch.zeros(self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size).to(model.device)
@@ -329,7 +329,7 @@ class Sampler:
                 time    = torch.Tensor([t])
                 time    = time.expand(self.args.sample_num).to(model.device)
                 
-                shift               = self.Scheduler.get_schedule_shift_time(time, degrade_mask_next_t, mu) 
+                shift               = self.Scheduler.get_schedule_shift_time(time, degrade_mask_next_t, mu.squeeze().to(model.device)) 
                 shifted_sample_t    = self.Scheduler.perturb_shift(sample_t, shift)
                 
                 

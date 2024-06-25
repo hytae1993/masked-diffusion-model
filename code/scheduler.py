@@ -115,7 +115,7 @@ class Scheduler:
         if ddpm_num_steps > len(time_list):
             raise ValueError("Desired to remove number of pixels is greater than the size of input image.")
 
-        x       = np.linspace(1, self.image_size, self.args.ddpm_num_steps)
+        x       = np.linspace(1, self.image_size, ddpm_num_steps)
         values  = np.log(x)
         
         values  = values - min(values) + 1
@@ -556,7 +556,7 @@ class Scheduler:
     #     shift_time  = shift_time.to(self.args.weight_dtype)
     #     return shift_time
     
-    def get_schedule_shift_time(self, timesteps: torch.IntTensor, binarymasks: torch.Tensor) -> torch.FloatTensor:
+    def get_schedule_shift_time(self, timesteps: torch.IntTensor, binarymasks: torch.Tensor, mu: torch.Tensor) -> torch.FloatTensor:
         
         timesteps   = timesteps.int()
         
@@ -571,6 +571,11 @@ class Scheduler:
             
             shift_time  = random * ratio
             shift_time  = shift_time.to(self.args.weight_dtype)
+            # shift_time  = shift_time[:,None,None,None]
+            
+            clamp_min   = -1 * mu - ratio
+            clamp_max   = -1 * mu + ratio
+            shift_time  = torch.clamp(shift_time, min=clamp_min, max=clamp_max)
             shift_time  = shift_time[:,None,None,None]
             
             # """
