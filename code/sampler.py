@@ -53,7 +53,23 @@ class Sampler:
         return latent, random
     
     
-    def sample(self, model: Module, timesteps_used_epoch):
+    def _get_latent_initial_interpolation(self, interpolation_shift):
+        latent      = torch.zeros(self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
+        
+        if interpolation_shift > 0:
+            grid        = torch.linspace(-1, 1-interpolation_shift, self.args.sample_num)
+        elif interpolation_shift < 0:
+            grid        = torch.linspace(-1-interpolation_shift, 1, self.args.sample_num)
+        else:
+            grid        = torch.linspace(-1, 1, self.args.sample_num)
+            
+        grid        = grid[:,None,None,None]
+        latent      = latent + grid
+        
+        return latent, grid
+        
+    
+    def sample(self, model: Module, timesteps_used_epoch, interpolation_shift=None):
         '''
         Generate the sampling result about time t only used for training 
         '''
@@ -82,6 +98,9 @@ class Sampler:
                 elif self.args.test_method == "mean_shift_momentum":
                     sample, visual_list  = self._sample_mean_shift_momentum(model, timesteps_used_epoch)
                     return sample, visual_list
+                elif self.args.test_method == "interpolation":
+                    sample, latent_mu, visual_list  = self._sample_interpolation(model, timesteps_used_epoch, interpolation_shift)
+                    return sample, latent_mu, visual_list
                 
             
     
@@ -356,19 +375,6 @@ class Sampler:
                     elif self.args.sampling_mask_dependency == 'dependent':
                         degraded_next_t, degrade_mask_next_t, mean_mask_next_t  = self.Scheduler.degrade_index_sampling(index_list, black_area_num_next_t, sample_0, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
                     
-                    # if self.args.sampling_mask_dependency == 'independent':
-                    #     degraded_t, degrade_mask_t, mean_mask_t                 = self.Scheduler.degrade_independent_base_sampling(black_area_num_t, sample_0, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
-                    #     degraded_next_t, degrade_mask_next_t, mean_mask_next_t  = self.Scheduler.degrade_independent_base_sampling(black_area_num_next_t, sample_0, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
-                        
-                    # elif self.args.sampling_mask_dependency == 'dependent':
-                    #     degraded_t, degrade_mask_t, mean_mask_t                 = self.Scheduler.degrade_index_sampling(index_list, black_area_num_t, sample_0, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
-                    #     degraded_next_t, degrade_mask_next_t, mean_mask_next_t  = self.Scheduler.degrade_index_sampling(index_list, black_area_num_next_t, sample_0, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
-                        
-                    # elif self.args.sampling_mask_dependency == 'dependent_in_t':
-                    #     new_index_list  = torch.stack([torch.randperm(self.args.data_size * self.args.data_size) for _ in range(self.args.sample_num)]).to(model.device)
-                    #     degraded_t, degrade_mask_t, mean_mask_t                 = self.Scheduler.degrade_index_sampling(new_index_list, black_area_num_t, sample_0, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
-                    #     degraded_next_t, degrade_mask_next_t, mean_mask_next_t  = self.Scheduler.degrade_index_sampling(new_index_list, black_area_num_next_t, sample_0, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
-                        
                     difference  = sample_t - degraded_t
                     
                     if self.args.momentum_adaptive == 'base_momentum':
@@ -416,6 +422,111 @@ class Sampler:
         sample_progress_bar.close()
         
         return sample_0, [sample_t_list, shift_list, shifted_list, mask_list, shifted_result_list, sample_0_list, degraded_mask_list, degraded_t_list, difference_list, degraded_next_t_list]
+    
+    
+    def _sample_interpolation(self, model: Module, timesteps_used_epoch, interpolation_shift):
+        latent, mu                  = self._get_latent_initial_interpolation(interpolation_shift)
+        sample_t                    = latent.to(model.device)
+        degrade_mask_t              = torch.zeros(1, self.args.out_channel, self.args.data_size, self.args.data_size).to(model.device)
+        degrade_mask_next_t         = torch.zeros(1, self.args.out_channel, self.args.data_size, self.args.data_size).to(model.device)
+        
+        
+        sample_t_list               = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
+        degraded_mask_list          = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
+        shift_list                  = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
+        shifted_list                = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
+        mask_list                   = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
+        shifted_result_list         = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
+        sample_0_list               = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
+        difference_list             = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
+        degraded_t_list             = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
+        degraded_next_t_list        = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
+        
+        
+        # print(self.Scheduler.get_black_area_num_pixels_all())
+        # print(timesteps_used_epoch)
+        # exit(1)
+        
+        with torch.no_grad():
+            sample_progress_bar = tqdm(total=len(timesteps_used_epoch), leave=False)
+            sample_progress_bar.set_description(f"Sampling(momentum sampling)")
+            
+            if self.args.sampling_mask_dependency == 'independent':
+                index_list  = None
+            elif self.args.sampling_mask_dependency == 'dependent':
+                # make random list: list size = [sample_num, img_size]
+                index_list = torch.stack([torch.randperm(self.args.data_size * self.args.data_size) for _ in range(self.args.sample_num)]).to(model.device)
+            
+            for i in range(len(timesteps_used_epoch)-1, -1, -1):
+                t       = timesteps_used_epoch[i]
+                time    = torch.Tensor([t])
+                time    = time.expand(self.args.sample_num).to(model.device)
+                
+                shift               = self.Scheduler.get_schedule_shift_time_interpolation(time, mu.squeeze().to(model.device), interpolation_shift) 
+                shifted_sample_t    = self.Scheduler.perturb_shift(sample_t, shift)
+                
+                mask                = model(shifted_sample_t, time).sample
+                shifted_sample_0    = shifted_sample_t + mask # x`_0
+                sample_0            = self.Scheduler.perturb_shift_inverse(shifted_sample_0, shift)
+                
+                
+                shift_list[len(timesteps_used_epoch) - i]               = shift
+                shifted_list[len(timesteps_used_epoch) - i]             = shifted_sample_t
+                mask_list[len(timesteps_used_epoch) - i]                = mask
+                shifted_result_list[len(timesteps_used_epoch) - i]      = shifted_sample_0
+                sample_0_list[len(timesteps_used_epoch) - i]            = sample_0
+                
+                if i > 0:
+                    next_t                      = time - 1
+                    black_area_num_t            = self.Scheduler.get_black_area_num_pixels_time(time)
+                    black_area_num_next_t       = self.Scheduler.get_black_area_num_pixels_time(next_t)
+                    
+                    degraded_t  = self.Scheduler.degrade_with_mask(sample_0, degrade_mask_next_t, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
+                    
+                    degraded_next_t, degrade_mask_next_t, mean_mask_next_t  = self.Scheduler.degrade_interpolation_sampling(black_area_num_next_t, sample_0, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
+                    
+                        
+                    difference  = sample_t - degraded_t
+                    
+                    if self.args.momentum_adaptive == 'base_momentum':
+                        """
+                        base momenutm sampling: cold diffusion
+                        x_{t-1} = x_t - D(x_0, t) + D(x_0, t-1)
+                        """
+                        sample_t    = degraded_next_t + difference
+                        
+                    elif self.args.momentum_adaptive == 'momentum':
+                        '''
+                        new momentum sampling
+                        difference: x_t - D(x_0, t)
+                        weight: a, 1-a
+                        '''
+                        momentum    = (1-self.args.adaptive_momentum_rate) * momentum + self.args.adaptive_momentum_rate * difference
+                        sample_t    = momentum + degraded_next_t
+                        
+                    elif self.args.momentum_adaptive == 'boosting':
+                        '''
+                        weight: a^2 + b^2 = 1, a is decaying parameter
+                        '''
+                        ratio       = self.Scheduler.get_ratio_list()
+                        a           = ratio[i-1]
+                        b           = math.sqrt(1-(a**2))
+                        
+                        momentum    = (a**2) * momentum + (b**2) * difference
+                        momentum    = difference
+                        sample_t    = momentum + degraded_next_t
+                        
+                        
+                    degraded_next_t_list[len(timesteps_used_epoch) - i] = degraded_next_t    
+                    degraded_t_list[len(timesteps_used_epoch) - i]      = degraded_t    
+                    difference_list[len(timesteps_used_epoch) - i]      = difference    
+                    sample_t_list[len(timesteps_used_epoch) - i]        = sample_t
+                    degraded_mask_list[len(timesteps_used_epoch) - i]   = degrade_mask_next_t
+                
+                sample_progress_bar.update(1)
+        sample_progress_bar.close()
+        
+        return sample_0, mu, [sample_t_list, shift_list, shifted_list, mask_list, shifted_result_list, sample_0_list, degraded_mask_list, degraded_t_list, difference_list, degraded_next_t_list]
     
         
     def _save_image_grid(self, sample: torch.Tensor, normalization='global', dir_save=None, file_sample=None):
