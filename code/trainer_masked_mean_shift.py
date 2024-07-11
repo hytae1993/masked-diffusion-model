@@ -100,7 +100,7 @@ class Trainer:
         # ===================================================================================
         # timesteps           = torch.randint(low=1, high=self.args.updated_ddpm_num_steps+1, size=(input.shape[0],), device=input.device)
         timeindex           = torch.randint(low=0, high=len(self.timesteps_used_epoch), size=(self.input.shape[0],), device=self.input.device)
-        timesteps           = torch.index_select(torch.tensor(self.timesteps_used_epoch, device=timeindex.device), 0, timeindex)
+        timesteps           = torch.index_select(torch.tensor(self.timesteps_used_epoch, device=timeindex.device), 0, timeindex).to(self.args.weight_dtype)
         
         black_area_num      = self.Scheduler.get_black_area_num_pixels_time(timesteps)      # get number of removed pixels at each timestep 
         self.degraded_img, self.degrade_binary_masks, self.degradation_mask, self.mean_pixel = self.Scheduler.degrade_training(black_area_num, self.input, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
@@ -109,9 +109,8 @@ class Trainer:
         # ===================================================================================
         # shift 
         # ===================================================================================
-        self.shift                  = self.Scheduler.get_schedule_shift_time(timesteps, self.degrade_binary_masks, self.input.mean(dim=(1,2,3))) 
-        self.shifted_degrade_img    = self.Scheduler.perturb_shift(self.degraded_img, self.shift)
-        
+        self.shift                  = self.Scheduler.get_schedule_shift_time(timesteps, self.degrade_binary_masks, self.input.mean(dim=(1,2,3))).to(self.args.weight_dtype) 
+        self.shifted_degrade_img    = self.Scheduler.perturb_shift(self.degraded_img.to(self.args.weight_dtype), self.shift)
         
         # ===================================================================================
         # reconstruct and train 
@@ -129,7 +128,7 @@ class Trainer:
                 weight_loss_timesteps = None
             
             # self.reconstruct_loss   = F.mse_loss(self.inverse_shift_reconstructed_img, self.input, reduction="none")
-            self.reconstruct_loss   = F.mse_loss(self.inverse_shift_reconstructed_img, self.input, reduction="none")
+            self.reconstruct_loss   = F.mse_loss(self.inverse_shift_reconstructed_img.float(), self.input.float(), reduction="none")
             
             if weight_loss_timesteps is not None:
                 weight_loss = weight_loss_timesteps[:, None, None, None]
