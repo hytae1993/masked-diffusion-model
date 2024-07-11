@@ -311,11 +311,18 @@ class Scheduler:
             masks   = masks.expand_as(img)
         
         elif self.args.select_degrade_pixel == 'thresholding':
-            masks   = torch.FloatTensor(img.shape[0], self.height*self.width).uniform_(0.0, +1.0).to(img.device)
-            masks   = (masks > black_area_num.unsqueeze(dim=1)).float() * 1
-            masks   = masks.reshape(len(black_area_num), 1, self.height, self.width)
-            masks   = masks.expand_as(img)
+            if self.args.degrade_channel == '1-channel':
+                masks   = torch.FloatTensor(img.shape[0], self.height*self.width).uniform_(0.0, +1.0).to(img.device)
+                masks   = (masks > black_area_num.unsqueeze(dim=1)).float() * 1
+                masks   = masks.reshape(len(black_area_num), 1, self.height, self.width)
+                masks   = masks.expand_as(img)
                     
+            elif self.args.degrade_channel == '3-channel':
+                masks   = torch.FloatTensor(img.shape[0], 3*self.height*self.width).uniform_(0.0, +1.0).to(img.device)
+                masks   = (masks > black_area_num.unsqueeze(dim=1)).float() * 1
+                masks   = masks.reshape(len(black_area_num), 3, self.height, self.width)
+                
+            
         try:
             # mean_pixel = float(mean_option)
             mean_pixel  = torch.ones(len(black_area_num), img.shape[1], 1, 1).to(img.device) * float(mean_option)
@@ -450,6 +457,7 @@ class Scheduler:
         Returns:
         
         """
+        
         if self.args.select_degrade_pixel == 'indexing':
             masks = torch.ones((len(black_area_num_t), self.height*self.width)).to(img.device)
             
@@ -459,11 +467,17 @@ class Scheduler:
             masks   = masks.expand_as(img)
         
         elif self.args.select_degrade_pixel == 'thresholding':
-            masks   = torch.FloatTensor(img.shape[0], self.height*self.width).uniform_(0.0, +1.0).to(img.device)
-            masks   = (masks > black_area_num_t.unsqueeze(dim=1)).float() * 1
-            masks   = masks.reshape(len(black_area_num_t), 1, self.height, self.width)
-            masks   = masks.expand_as(img)
-        
+            if self.args.degrade_channel == '1-channel':
+                masks   = torch.FloatTensor(img.shape[0], self.height*self.width).uniform_(0.0, +1.0).to(img.device)
+                masks   = (masks > black_area_num_t.unsqueeze(dim=1)).float() * 1
+                masks   = masks.reshape(len(black_area_num_t), 1, self.height, self.width)
+                masks   = masks.expand_as(img)
+                    
+            elif self.args.degrade_channel == '3-channel':
+                masks   = torch.FloatTensor(img.shape[0], 3*self.height*self.width).uniform_(0.0, +1.0).to(img.device)
+                masks   = (masks > black_area_num_t.unsqueeze(dim=1)).float() * 1
+                masks   = masks.reshape(len(black_area_num_t), 3, self.height, self.width)
+                
         try:
             mean_pixel  = torch.ones(len(black_area_num_t), img.shape[1], 1, 1).to(img.device) * float(mean_option)
         except ValueError:
@@ -530,6 +544,26 @@ class Scheduler:
         degrade_mask    = masks
         mean_mask       = mean_pixel * torch.ones((self.args.sample_num, masks.shape[1], self.height, self.width)).to(img.device)
     
+        return degrade_img, degrade_mask, mean_mask
+    
+    
+    def degrade_interpolation_sampling(self, black_area_num_t, img, mean_option=None, mean_area=None):
+        masks   = torch.FloatTensor(1, self.height*self.width).uniform_(0.0, +1.0).to(img.device)
+        # masks   = torch.FloatTensor(len(black_area_num_t), self.height*self.width).uniform_(0.0, +1.0).to(img.device)
+        masks   = (masks > black_area_num_t.unsqueeze(dim=1)).float() * 1
+        masks   = masks.reshape(len(black_area_num_t), 1, self.height, self.width)
+        masks   = masks.expand_as(img)
+        
+        try:
+            mean_pixel  = torch.ones(len(black_area_num_t), img.shape[1], 1, 1).to(img.device) * float(mean_option)
+        except ValueError:
+            sum_pixel   = (img * (1-masks)).sum(dim=(1,2,3), keepdim=True)
+            mean_pixel  = sum_pixel / (1-masks).sum(dim=(1,2,3), keepdim=True)
+            
+        degrade_img     = ((1-masks) * mean_pixel) + masks * img
+        degrade_mask    = masks
+        mean_mask       = mean_pixel * torch.ones((len(black_area_num_t), masks.shape[1], self.height, self.width)).to(img.device)
+        
         return degrade_img, degrade_mask, mean_mask
     
     
@@ -675,6 +709,28 @@ class Scheduler:
         # shift_time  = shift_time * binarymasks    # shift only non-degraded area
         
         # shift_time  = shift_time - shift_time.mean() # make mask mean to zero
+        
+        return shift_time
+    
+    
+    def get_schedule_shift_time_interpolation(self, timesteps: torch.IntTensor, mu: torch.Tensor, interpolation_shift) -> torch.FloatTensor:
+        
+        timesteps   = timesteps.int()
+        
+        shift       = torch.ones(len(timesteps)) * interpolation_shift
+        shift       = shift.to(timesteps.device)
+        timesteps   = timesteps.int()
+        ratio       = torch.index_select(self.ratio_list.to(timesteps.device), 0, timesteps-1)
+        
+        shift_time  = shift * ratio
+        shift_time  = shift_time.to(self.args.weight_dtype)
+        
+        clamp_min   = -1 * mu - ratio
+        clamp_max   = -1 * mu + ratio
+        shift_time  = torch.clamp(shift_time, min=clamp_min, max=clamp_max)
+        
+        shift_time  = shift_time[:,None,None,None]
+        shift_time  = shift_time.to(self.args.weight_dtype)
         
         return shift_time
     
