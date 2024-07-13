@@ -318,6 +318,7 @@ class Sampler:
         
         sample_t_list               = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
         degraded_mask_list          = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
+        degraded_mask_next_list     = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
         shift_list                  = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
         shifted_list                = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
         mask_list                   = torch.zeros(len(timesteps_used_epoch)+1, self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
@@ -347,7 +348,7 @@ class Sampler:
                 time    = torch.Tensor([t])
                 time    = time.expand(self.args.sample_num).to(model.device)
                 
-                shift               = self.Scheduler.get_schedule_shift_time(time, degrade_mask_next_t, mu.squeeze().to(model.device)) 
+                shift               = self.Scheduler.get_schedule_shift_time(time, degrade_mask_t, mu.squeeze().to(model.device)) 
                 shifted_sample_t    = self.Scheduler.perturb_shift(sample_t, shift)
                 
                 
@@ -367,22 +368,27 @@ class Sampler:
                     black_area_num_t            = self.Scheduler.get_black_area_num_pixels_time(time)
                     black_area_num_next_t       = self.Scheduler.get_black_area_num_pixels_time(next_t)
                     
-                    
-                    degraded_t  = self.Scheduler.degrade_with_mask(sample_0, degrade_mask_next_t, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
-                    
                     if self.args.sampling_mask_dependency == 'independent':
+                        degraded_t  = self.Scheduler.degrade_with_mask(sample_0, degrade_mask_next_t, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
                         degraded_next_t, degrade_mask_next_t, mean_mask_next_t  = self.Scheduler.degrade_independent_base_sampling(black_area_num_next_t, sample_0, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
+                        
+                        degraded_mask_list[len(timesteps_used_epoch) - i]   = degrade_mask_next_t
+                        
                     elif self.args.sampling_mask_dependency == 'dependent':
-                        degraded_next_t, degrade_mask_next_t, mean_mask_next_t  = self.Scheduler.degrade_index_sampling(index_list, black_area_num_next_t, sample_0, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
-                    
-                    difference  = sample_t - degraded_t
+                        # degraded_next_t, degrade_mask_next_t, mean_mask_next_t  = self.Scheduler.degrade_index_sampling(index_list, black_area_num_next_t, sample_0, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
+                        degraded_t, degrade_mask_t, mean_mask_t, degraded_next_t, degrade_mask_next_t, mean_mask_next_t \
+                            = self.Scheduler.degrade_dependent_base_sampling(black_area_num_t, black_area_num_next_t, sample_0, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
+                            
+                        degraded_mask_list[len(timesteps_used_epoch) - i]       = degrade_mask_t
+                        degraded_mask_next_list[len(timesteps_used_epoch) - i]  = degrade_mask_next_t
                     
                     if self.args.momentum_adaptive == 'base_momentum':
                         """
                         base momenutm sampling: cold diffusion
                         x_{t-1} = x_t - D(x_0, t) + D(x_0, t-1)
                         """
-                        sample_t    = degraded_next_t + difference
+                        difference  = degraded_next_t - degraded_t
+                        sample_t    = sample_t + difference
                         
                     elif self.args.momentum_adaptive == 'momentum':
                         '''
@@ -390,6 +396,7 @@ class Sampler:
                         difference: x_t - D(x_0, t)
                         weight: a, 1-a
                         '''
+                        difference  = sample_t - degraded_t
                         momentum    = (1-self.args.adaptive_momentum_rate) * momentum + self.args.adaptive_momentum_rate * difference
                         sample_t    = momentum + degraded_next_t
                         
@@ -401,27 +408,20 @@ class Sampler:
                         a           = ratio[i-1]
                         b           = math.sqrt(1-(a**2))
                         
+                        difference  = sample_t - degraded_t
                         momentum    = (a**2) * momentum + (b**2) * difference
                         momentum    = difference
                         sample_t    = momentum + degraded_next_t
-                        
-                        
-                    # sample_t    = sample_t - sample_t.mean()
-                    
+                                      
                     degraded_next_t_list[len(timesteps_used_epoch) - i] = degraded_next_t    
                     degraded_t_list[len(timesteps_used_epoch) - i]      = degraded_t    
                     difference_list[len(timesteps_used_epoch) - i]      = difference    
                     sample_t_list[len(timesteps_used_epoch) - i]        = sample_t
-                    degraded_mask_list[len(timesteps_used_epoch) - i]   = degrade_mask_next_t
-                # sample_t    = sample_t - sample_t.mean()
-                
-                # print(sample_t.mean(), degraded_t.mean(), degraded_next_t.mean(), sample_0.mean())
-                
-                
+                    
                 sample_progress_bar.update(1)
         sample_progress_bar.close()
         
-        return sample_0, [sample_t_list, shift_list, shifted_list, mask_list, shifted_result_list, sample_0_list, degraded_mask_list, degraded_t_list, difference_list, degraded_next_t_list]
+        return sample_0, [sample_t_list, shift_list, shifted_list, mask_list, shifted_result_list, sample_0_list, degraded_mask_list, degraded_mask_next_list, degraded_t_list, difference_list, degraded_next_t_list]
     
     
     def _sample_interpolation(self, model: Module, timesteps_used_epoch, interpolation_shift):

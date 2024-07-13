@@ -94,6 +94,8 @@ class Scheduler:
         elif self.args.select_degrade_pixel == 'thresholding':
             black_area_num_pixles_time  = torch.index_select(torch.tensor(self.ratio_list, device=time.device), 0, time)
             
+        print(self.ratio_list)
+        exit(1)
         return black_area_num_pixles_time
     
     
@@ -508,7 +510,7 @@ class Scheduler:
         return degrade_img, degrade_mask, mean_mask
     
     
-    def degrade_dependent_base_sampling(self, img, mean_option, black_area_num, index_list):
+    def degrade_dependent_base_sampling(self, black_area_num_t, black_area_num_next_t, img, mean_option, mean_area):
         """
         Degrade input image with single mask for base 'sampling'.
         Same as original ddpm sampling
@@ -519,32 +521,64 @@ class Scheduler:
         Returns:
         
         """
-        masks = torch.ones((self.args.sample_num, self.height*self.width)).to(img.device)
+        if self.args.select_degrade_pixel == 'indexing':
+            pass
         
-        index_using = index_list[:, :black_area_num]
-        masks.scatter_(1, index_using, 0)
+        elif self.args.select_degrade_pixel == 'thresholding':
+            if self.args.degrade_channel == '1-channel':
+                mask            = torch.FloatTensor(img.shape[0], self.height*self.width).uniform_(0.0, +1.0).to(img.device)
+                
+                masks_t         = (mask > black_area_num_t.unsqueeze(dim=1)).float() * 1
+                masks_t         = masks_t.reshape(len(black_area_num_t), 1, self.height, self.width)
+                masks_t         = masks_t.expand_as(img)
+                
+                masks_next_t    = (mask > black_area_num_next_t.unsqueeze(dim=1)).float() * 1
+                masks_next_t    = masks_next_t.reshape(len(black_area_num_next_t), 1, self.height, self.width)
+                masks_next_t    = masks_next_t.expand_as(img)
+                    
+            elif self.args.degrade_channel == '3-channel':
+                mask            = torch.FloatTensor(img.shape[0], 3*self.height*self.width).uniform_(0.0, +1.0).to(img.device)
+                
+                masks_t         = (mask > black_area_num_t.unsqueeze(dim=1)).float() * 1
+                masks_t         = masks_t.reshape(len(black_area_num_t), 3, self.height, self.width)
+                
+                masks_next_t    = (mask > black_area_num_next_t.unsqueeze(dim=1)).float() * 1
+                masks_next_t    = masks_next_t.reshape(len(black_area_num_next_t), 3, self.height, self.width)
         
-        masks   = masks.reshape(self.args.sample_num, -1, self.height, self.width)
-        masks   = masks.expand_as(img)
         
-        try:
-            mean_pixel  = torch.ones(self.args.sample_num, img.shape[1], 1, 1).to(img.device) * float(mean_option)
-        except ValueError:
-            if mean_option == 'degraded_area':  # calculate with degraded pixels
-                sum_pixel   = (img * (1-masks)).sum(dim=(2,3), keepdim=True)
-                mean_pixel  = sum_pixel / (1-masks).sum(dim=(2,3), keepdim=True)
-            elif mean_option == 'non_degraded_area':    # calculate with non-degraded area
-                sum_pixel   = (img * masks).sum(dim=(2,3), keepdim=True)
-                mean_pixel  = sum_pixel / (1-masks).sum(dim=(2,3), keepdim=True) * -1
-                mean_pixel[torch.isnan(mean_pixel)] = 0.0
-            elif mean_option == 'difference':
-                pass
+        if mean_option == 'degraded_area':  # calculate with degraded pixels
+            if mean_area == 'image-wise':
+                sum_pixel_t         = (img * (1-masks_t)).sum(dim=(1,2,3), keepdim=True)
+                mean_pixel_t        = sum_pixel_t / (1-masks_t).sum(dim=(1,2,3), keepdim=True)
+                
+                sum_pixel_next_t    = (img * (1-masks_next_t)).sum(dim=(1,2,3), keepdim=True)
+                mean_pixel_next_t   = sum_pixel_next_t / (1-masks_next_t).sum(dim=(1,2,3), keepdim=True)
+                
+            elif mean_area == 'channel-wise':
+                sum_pixel_t         = (img * (1-masks_t)).sum(dim=(2,3), keepdim=True)
+                mean_pixel_t        = sum_pixel_t / (1-masks_t).sum(dim=(2,3), keepdim=True)
+                
+                sum_pixel_next_t    = (img * (1-masks_next_t)).sum(dim=(2,3), keepdim=True)
+                mean_pixel_next_t   = sum_pixel_next_t / (1-masks_next_t).sum(dim=(2,3), keepdim=True)
             
-        degrade_img     = ((1-masks) * mean_pixel) + masks * img
-        degrade_mask    = masks
-        mean_mask       = mean_pixel * torch.ones((self.args.sample_num, masks.shape[1], self.height, self.width)).to(img.device)
+        elif mean_option == 'non_degraded_area':    # calculate with non-degraded area
+            pass
+            
+        elif mean_option == 0:
+            mean_pixel  = torch.ones(len(black_area_num_t), img.shape[1], 1, 1).to(img.device) * float(mean_option)
+            
+        elif mean_option == 'difference':
+            pass
+            
+        degrade_img_t           = ((1-masks_t) * mean_pixel_t) + masks_t * img
+        degrade_mask_t          = masks_t
+        mean_mask_t             = mean_pixel_t * torch.ones((len(black_area_num_t), masks_t.shape[1], self.height, self.width)).to(img.device)
+        
+        degrade_img_next_t      = ((1-masks_next_t) * mean_pixel_next_t) + masks_next_t * img
+        degrade_mask_next_t     = masks_next_t
+        mean_mask_next_t        = mean_pixel_next_t * torch.ones((len(black_area_num_t), masks_t.shape[1], self.height, self.width)).to(img.device)
     
-        return degrade_img, degrade_mask, mean_mask
+        return degrade_img_t, degrade_mask_t, mean_mask_t, degrade_img_next_t, degrade_mask_next_t, mean_mask_next_t
     
     
     def degrade_interpolation_sampling(self, black_area_num_t, img, mean_option=None, mean_area=None):
