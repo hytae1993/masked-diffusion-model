@@ -46,7 +46,8 @@ class Sampler:
         latent      = torch.zeros(self.args.sample_num, self.args.out_channel, self.args.data_size, self.args.data_size)
         
         # random      = torch.FloatTensor(self.args.sample_num).normal_(mean=0, std=0.1)
-        random      = torch.FloatTensor(self.args.sample_num).uniform_(-1, 1)    
+        # random      = torch.FloatTensor(self.args.sample_num).uniform_(-1, 1)  
+        random      = torch.zeros(self.args.sample_num)  
         random      = random[:,None,None,None]
         latent      = latent + random
         
@@ -337,12 +338,6 @@ class Sampler:
             sample_progress_bar = tqdm(total=len(timesteps_used_epoch), leave=False)
             sample_progress_bar.set_description(f"Sampling(momentum sampling)")
             
-            if self.args.sampling_mask_dependency == 'independent':
-                index_list  = None
-            elif self.args.sampling_mask_dependency == 'dependent':
-                # make random list: list size = [sample_num, img_size]
-                index_list = torch.stack([torch.randperm(self.args.data_size * self.args.data_size) for _ in range(self.args.sample_num)]).to(model.device)
-            
             for i in range(len(timesteps_used_epoch)-1, -1, -1):
                 t       = timesteps_used_epoch[i]
                 time    = torch.Tensor([t])
@@ -351,11 +346,20 @@ class Sampler:
                 shift               = self.Scheduler.get_schedule_shift_time(time, degrade_mask_t, mu.squeeze().to(model.device)) 
                 shifted_sample_t    = self.Scheduler.perturb_shift(sample_t, shift)
                 
-                
                 mask                = model(shifted_sample_t, time).sample
                 shifted_sample_0    = shifted_sample_t + mask # x`_0
+                # shifted_sample_0    = mask
+                
+                
+                # # adjust mean
+                # shifted_sample_0    = shifted_sample_0 + (shifted_sample_t.mean(dim=(1,2,3)) - shifted_sample_0.mean(dim=(1,2,3)))
                 sample_0            = self.Scheduler.perturb_shift_inverse(shifted_sample_0, shift)
                 
+                
+                # print("===============================================================")
+                # print(sample_t.min(), sample_t.max(), sample_t.mean())
+                # print(mask.min(), mask.max(), mask.mean())
+                # print(sample_0.min(), sample_0.max(), sample_0.mean())
                 
                 shift_list[len(timesteps_used_epoch) - i]               = shift
                 shifted_list[len(timesteps_used_epoch) - i]             = shifted_sample_t
@@ -364,58 +368,93 @@ class Sampler:
                 sample_0_list[len(timesteps_used_epoch) - i]            = sample_0
                 
                 if i > 0:
-                    next_t                      = time - 1
-                    black_area_num_t            = self.Scheduler.get_black_area_num_pixels_time(time)
-                    black_area_num_next_t       = self.Scheduler.get_black_area_num_pixels_time(next_t)
+                    next_t  = time - 1
+                elif i == 0: # for last step of momentum sampling
+                    next_t  = time
+                black_area_num_t            = self.Scheduler.get_black_area_num_pixels_time(time)
+                black_area_num_next_t       = self.Scheduler.get_black_area_num_pixels_time(next_t)
+                
+                if self.args.sampling_mask_dependency == 'independent':
+                    # degraded_t  = self.Scheduler.degrade_with_mask(sample_0, degrade_mask_next_t, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
+                    degraded_t, degrade_mask_t, mean_mask_t                 = self.Scheduler.degrade_independent_base_sampling(black_area_num_t, sample_0, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
+                    degraded_next_t, degrade_mask_next_t, mean_mask_next_t  = self.Scheduler.degrade_independent_base_sampling(black_area_num_next_t, sample_0, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
                     
-                    if self.args.sampling_mask_dependency == 'independent':
-                        degraded_t  = self.Scheduler.degrade_with_mask(sample_0, degrade_mask_next_t, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
-                        degraded_next_t, degrade_mask_next_t, mean_mask_next_t  = self.Scheduler.degrade_independent_base_sampling(black_area_num_next_t, sample_0, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
-                        
-                        degraded_mask_list[len(timesteps_used_epoch) - i]   = degrade_mask_next_t
-                        
-                    elif self.args.sampling_mask_dependency == 'dependent':
-                        # degraded_next_t, degrade_mask_next_t, mean_mask_next_t  = self.Scheduler.degrade_index_sampling(index_list, black_area_num_next_t, sample_0, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
-                        degraded_t, degrade_mask_t, mean_mask_t, degraded_next_t, degrade_mask_next_t, mean_mask_next_t \
-                            = self.Scheduler.degrade_dependent_base_sampling(black_area_num_t, black_area_num_next_t, sample_0, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
-                            
-                        degraded_mask_list[len(timesteps_used_epoch) - i]       = degrade_mask_t
-                        degraded_mask_next_list[len(timesteps_used_epoch) - i]  = degrade_mask_next_t
+                    degraded_mask_list[len(timesteps_used_epoch) - i]       = degrade_mask_t
+                    degraded_mask_next_list[len(timesteps_used_epoch) - i]  = degrade_mask_next_t
                     
-                    if self.args.momentum_adaptive == 'base_momentum':
-                        """
-                        base momenutm sampling: cold diffusion
-                        x_{t-1} = x_t - D(x_0, t) + D(x_0, t-1)
-                        """
+                    
+                elif self.args.sampling_mask_dependency == 'dependent_prev':
+                    degraded_t  = self.Scheduler.degrade_with_mask(sample_0, degrade_mask_next_t, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
+                    degraded_next_t, degrade_mask_next_t, mean_mask_next_t  = self.Scheduler.degrade_independent_base_sampling(black_area_num_next_t, sample_0, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
+                    
+                    degraded_mask_list[len(timesteps_used_epoch) - i]  = degrade_mask_next_t
+                    
+                    
+                elif self.args.sampling_mask_dependency == 'dependent_t':
+                    degraded_t, degrade_mask_t, mean_mask_t, degraded_next_t, degrade_mask_next_t, mean_mask_next_t \
+                        = self.Scheduler.degrade_dependent_base_sampling(black_area_num_t, black_area_num_next_t, sample_0, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
+                        
+                    degraded_mask_list[len(timesteps_used_epoch) - i]       = degrade_mask_t
+                    degraded_mask_next_list[len(timesteps_used_epoch) - i]  = degrade_mask_next_t
+                
+                    
+                if self.args.momentum_adaptive == 'base_sampling':
+                    """
+                    base momenutm sampling: cold diffusion
+                    x_{t-1} = D(x_0, t-1)
+                    """
+                    if i == 0:
+                        break
+                    difference  = degraded_next_t - degraded_t
+                    sample_t    = degraded_next_t
+                
+                elif self.args.momentum_adaptive == 'base_momentum':
+                    """
+                    base momenutm sampling: cold diffusion
+                    x_{t-1} = x_t - D(x_0, t) + D(x_0, t-1)
+                    """
+                    if i > 0:
                         difference  = degraded_next_t - degraded_t
                         sample_t    = sample_t + difference
                         
-                    elif self.args.momentum_adaptive == 'momentum':
-                        '''
-                        new momentum sampling
-                        difference: x_t - D(x_0, t)
-                        weight: a, 1-a
-                        '''
-                        difference  = sample_t - degraded_t
-                        momentum    = (1-self.args.adaptive_momentum_rate) * momentum + self.args.adaptive_momentum_rate * difference
-                        sample_t    = momentum + degraded_next_t
+                        # sample_t    = normalize01(sample_t)
+                        # plt.imshow(sample_t[0].float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy())
+                        # plt.savefig('test.png')
+                    # elif i == 0:
+                    #     sample_t    = sample_t - degraded_t + sample_0 # in momentum sampling algorithm, last step does not degrade
+                    #     sample_0    = sample_t
                         
-                    elif self.args.momentum_adaptive == 'boosting':
-                        '''
-                        weight: a^2 + b^2 = 1, a is decaying parameter
-                        '''
-                        ratio       = self.Scheduler.get_ratio_list()
-                        a           = ratio[i-1]
-                        b           = math.sqrt(1-(a**2))
-                        
-                        difference  = sample_t - degraded_t
-                        momentum    = (a**2) * momentum + (b**2) * difference
-                        momentum    = difference
-                        sample_t    = momentum + degraded_next_t
-                                      
-                    degraded_next_t_list[len(timesteps_used_epoch) - i] = degraded_next_t    
-                    degraded_t_list[len(timesteps_used_epoch) - i]      = degraded_t    
-                    difference_list[len(timesteps_used_epoch) - i]      = difference    
+                    #     sample_0    = normalize01(sample_0)
+                    #     plt.imshow(sample_0[0].float().mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to("cpu", torch.uint8).numpy())
+                    #     plt.savefig('test.png')
+                    
+                elif self.args.momentum_adaptive == 'momentum':
+                    '''
+                    new momentum sampling
+                    difference: x_t - D(x_0, t)
+                    weight: a, 1-a
+                    '''
+                    difference  = sample_t - degraded_t
+                    momentum    = (1-self.args.adaptive_momentum_rate) * momentum + self.args.adaptive_momentum_rate * difference
+                    sample_t    = momentum + degraded_next_t
+                    
+                elif self.args.momentum_adaptive == 'boosting':
+                    '''
+                    weight: a^2 + b^2 = 1, a is decaying parameter
+                    '''
+                    ratio       = self.Scheduler.get_ratio_list()
+                    a           = ratio[i-1]
+                    b           = math.sqrt(1-(a**2))
+                    
+                    difference  = sample_t - degraded_t
+                    momentum    = (a**2) * momentum + (b**2) * difference
+                    momentum    = difference
+                    sample_t    = momentum + degraded_next_t
+                                    
+                degraded_next_t_list[len(timesteps_used_epoch) - i] = degraded_next_t    
+                degraded_t_list[len(timesteps_used_epoch) - i]      = degraded_t    
+                difference_list[len(timesteps_used_epoch) - i]      = difference    
+                if i != 0:
                     sample_t_list[len(timesteps_used_epoch) - i]        = sample_t
                     
                 sample_progress_bar.update(1)
