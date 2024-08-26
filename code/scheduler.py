@@ -37,13 +37,13 @@ class Scheduler:
         time_list                   = list(range(1, self.image_size+1))
         
         if self.args.ddpm_schedule == 'linear':
-            black_area_num_pixel        = self.get_extract_linear_random_sublist(time_list, self.args.ddpm_num_steps)
+            black_area_num_pixel        = self.get_extract_linear_random_sublist(self.args.ddpm_num_steps)
         
         elif self.args.ddpm_schedule == 'log':
             black_area_num_pixel        = self.get_extract_log_random_sublist(time_list, self.args.ddpm_num_steps)
             
         elif self.args.ddpm_schedule == 'exponential':
-            black_area_num_pixel        = self.get_extract_exponential_random_sublist(time_list, self.args.ddpm_num_steps)
+            black_area_num_pixel        = self.get_extract_exponential_random_sublist(self.args.ddpm_num_steps)
             
         elif self.args.ddpm_schedule == 'sigmoid':
             black_area_num_pixel        = self.get_extract_sigmoid_random_sublist(time_list, self.args.ddpm_num_steps)
@@ -51,10 +51,13 @@ class Scheduler:
         else:
             raise ValueError("Invalid mask ratio scheduler")
         
-        black_area_num_pixel[-1]    = self.image_size # make sure the last T is remove all pixels  
-        
+        if self.args.ddpm_schedule == 'log':
+            black_area_num_pixel[-1]    = self.image_size # make sure the last T is remove all pixels  
+            self.ratio_list         = torch.tensor(black_area_num_pixel / self.image_size)
+        else:
+            self.ratio_list         = black_area_num_pixel
+            
         ddpm_num_steps          = len(black_area_num_pixel)
-        self.ratio_list         = torch.tensor(black_area_num_pixel / self.image_size)
         self.reverse_ratio      = torch.flip(self.ratio_list, dims=(0,))
         self.black_area_pixels  = black_area_num_pixel        
         self.updated_ddpm_num_steps = ddpm_num_steps
@@ -94,26 +97,16 @@ class Scheduler:
         elif self.args.select_degrade_pixel == 'thresholding':
             black_area_num_pixles_time  = torch.index_select(torch.tensor(self.ratio_list, device=time.device), 0, time)
             
-        print(self.ratio_list)
-        exit(1)
         return black_area_num_pixles_time
     
     
-    def get_extract_linear_random_sublist(self, time_list, n):
-        if n > len(time_list):
-            raise ValueError("Desired to remove number of pixels is greater than the size of input image.")
+    def get_extract_linear_random_sublist(self, ddpm_num_steps):
         
-        # Generate linear scale indices
-        max_index       = len(time_list) - 1
-        # linear_indices  = [int(i / self.image_size) for i in range(1, n+1)]
-        linear_indices  = [int(self.image_size/n) * i for i in range(1, n+1)]  
-        # change to linspace
+        linear_schedule = np.linspace(1e-3, 1, ddpm_num_steps)
         
-        unique_linear_indices = list(set(linear_indices))
+        normalized_schedule = torch.tensor(linear_schedule)
         
-        # black_area_num_pixel = np.array([time_list[i] for i in sorted(unique_linear_indices)[:n]])
-        black_area_num_pixel    = np.array(sorted(unique_linear_indices)[:n])
-        return black_area_num_pixel
+        return normalized_schedule
     
     
     def get_extract_log_random_sublist(self, time_list, ddpm_num_steps):
@@ -134,41 +127,19 @@ class Scheduler:
         return black_area_num_pixel
     
     
-    def get_extract_exponential_random_sublist(self, time_list, ddpm_num_steps):
-        if ddpm_num_steps > len(time_list):
-            raise ValueError("Desired number of steps is greater than the length of time_list.")
-
-        # Generate exponential indices
-        exponent_indices = np.linspace(0, 1, ddpm_num_steps)
-        base    = self.args.ddpm_schedule_base # default 4000.0    
-        exponential_indices = base ** exponent_indices
+    def get_extract_exponential_random_sublist(self, ddpm_num_steps):
+        '''
+        https://colab.research.google.com/drive/17Xwe4D50gJcfeyvD7LEbpspFWmNzIani?authuser=1#scrollTo=hXIq9ucgPkku
+        '''
+        linear_schedule = np.linspace(0, 1, ddpm_num_steps)
     
-        # Normalize exponential indices to fit within the range of time_list
-        max_index = len(time_list) - 1
-        normalized_indices = (exponential_indices / exponential_indices.max()) * max_index
-        rounded_indices = np.round(normalized_indices).astype(int)
-    
-        # Ensure uniqueness and maintain order
-        unique_indices = sorted(set(rounded_indices))
+        exponential_schedule = self.args.ddpm_schedule_base ** linear_schedule # base: 10, 100, 1000
         
-        # Ensure the minimum value is not zero and is a small value
-        if unique_indices[0] == 0:
-            unique_indices[0] = 1
+        # Normalize the schedule to end at 1, not start from 0
+        normalized_schedule = exponential_schedule / exponential_schedule[-1]
+        normalized_schedule = torch.tensor(normalized_schedule)
         
-        # Ensure the reduced list has exactly ddpm_num_steps elements
-        while len(unique_indices) < ddpm_num_steps:
-            next_value = unique_indices[-1] + 1
-            if next_value < len(time_list):
-                unique_indices.append(next_value)
-            else:
-                break
-        
-        # Trim excess elements if any
-        unique_indices = unique_indices[:ddpm_num_steps]
-        
-        black_area_num_pixel    = np.array(unique_indices)
-        
-        return black_area_num_pixel
+        return normalized_schedule
 
     def get_extract_sigmoid_random_sublist(self, time_list, ddpm_num_steps):
         if ddpm_num_steps > len(time_list):
@@ -324,7 +295,6 @@ class Scheduler:
                 masks   = (masks > black_area_num.unsqueeze(dim=1)).float() * 1
                 masks   = masks.reshape(len(black_area_num), 3, self.height, self.width)
                 
-            
         try:
             # mean_pixel = float(mean_option)
             mean_pixel  = torch.ones(len(black_area_num), img.shape[1], 1, 1).to(img.device) * float(mean_option)
@@ -333,7 +303,6 @@ class Scheduler:
                 if mean_area == 'image-wise':
                     sum_pixel   = (img * (1-masks)).sum(dim=(1,2,3), keepdim=True)
                     mean_pixel  = sum_pixel / (1-masks).sum(dim=(1,2,3), keepdim=True)
-                    
                     
                 elif mean_area == 'channel-wise':
                     sum_pixel   = (img * (1-masks)).sum(dim=(2,3), keepdim=True)
@@ -345,10 +314,9 @@ class Scheduler:
                 mean_pixel  = sum_pixel / (1-masks).sum(dim=(2,3), keepdim=True) * -1
                 mean_pixel[torch.isnan(mean_pixel)] = 0.0
                 
-            elif mean_option == 0:
+            elif mean_option == "0":
                 mean_pixel  = torch.ones(len(black_area_num), img.shape[1], 1, 1).to(img.device) * float(mean_option)
 
-        
         degrade_img     = ((1-masks) * mean_pixel) + masks * img
         degrade_mask    = ((1-masks) * mean_pixel) + masks
         mean_mask       = torch.ones((len(black_area_num), img.shape[1], self.height, self.width)).to(img.device) * mean_pixel
@@ -564,12 +532,13 @@ class Scheduler:
         elif mean_option == 'non_degraded_area':    # calculate with non-degraded area
             pass
             
-        elif mean_option == 0:
-            mean_pixel  = torch.ones(len(black_area_num_t), img.shape[1], 1, 1).to(img.device) * float(mean_option)
+        elif mean_option == "0":
+            mean_pixel_t  = torch.ones(len(black_area_num_t), img.shape[1], 1, 1).to(img.device) * float(mean_option)
+            mean_pixel_next_t  = torch.ones(len(black_area_num_t), img.shape[1], 1, 1).to(img.device) * float(mean_option)
             
         elif mean_option == 'difference':
             pass
-            
+        
         degrade_img_t           = ((1-masks_t) * mean_pixel_t) + masks_t * img
         degrade_mask_t          = masks_t
         mean_mask_t             = mean_pixel_t * torch.ones((len(black_area_num_t), masks_t.shape[1], self.height, self.width)).to(img.device)
@@ -645,7 +614,7 @@ class Scheduler:
         
         timesteps   = timesteps.int()
         
-        if self.args.shift_type == 'constant':
+        if self.args.shift_type == '1-d_constant':
             """
             1-d shift
             """
@@ -656,12 +625,13 @@ class Scheduler:
             
             shift_time  = random * ratio
             shift_time  = shift_time.to(self.args.weight_dtype)
-            # shift_time  = shift_time[:,None,None,None]
-            
-            clamp_min   = -1 * mu - ratio
-            clamp_max   = -1 * mu + ratio
-            shift_time  = torch.clamp(shift_time, min=clamp_min, max=clamp_max)
             shift_time  = shift_time[:,None,None,None]
+            
+            ### using when the data is not normalized
+            # clamp_min   = -1 * mu - ratio
+            # clamp_max   = -1 * mu + ratio
+            # shift_time  = torch.clamp(shift_time, min=clamp_min, max=clamp_max)
+            # shift_time  = shift_time[:,None,None,None]
             
             # """
             # 1-d shift -> not using broadcasting
@@ -680,6 +650,21 @@ class Scheduler:
             #     ratio       = ratio[:,None,None,None]
             #     ratio       = ratio.expand_as(random)
             #     shift_time  = random * ratio
+            
+        elif self.args.shift_type == '3-d_constant':
+            """
+            3-d shift
+            """
+            random      = torch.ones(len(timesteps),3,1,1).to(timesteps.device)
+            random      = random * torch.FloatTensor(len(timesteps),3,1,1).uniform_(-1.0, +1.0).to(timesteps.device)
+            random      = random.to(timesteps.device)
+            timesteps   = timesteps.int()
+            
+            ratio       = torch.index_select(self.ratio_list.to(timesteps.device), 0, timesteps-1)
+            ratio       = ratio[:,None,None,None]
+            ratio       = ratio.expand_as(random)
+            shift_time  = random * ratio
+            shift_time  = shift_time.to(self.args.weight_dtype)
                 
         
         elif self.args.shift_type == 'noise_reduction':
