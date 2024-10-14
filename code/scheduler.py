@@ -308,7 +308,6 @@ class Scheduler:
                     sum_pixel   = (img * (1-masks)).sum(dim=(2,3), keepdim=True)
                     mean_pixel  = sum_pixel / (1-masks).sum(dim=(2,3), keepdim=True)
                 
-                
             elif mean_option == 'non_degraded_area':    # calculate with non-degraded area
                 sum_pixel   = (img * masks).sum(dim=(2,3), keepdim=True)
                 mean_pixel  = sum_pixel / (1-masks).sum(dim=(2,3), keepdim=True) * -1
@@ -724,6 +723,7 @@ class Scheduler:
         # reverse_ratio   = torch.index_select(torch.flip(self.ratio_list, [0]).to(timesteps.device), 0, timesteps-1)
         # shift_time  = random * reverse_ratio
         shift_time  = shift_time.to(self.args.weight_dtype)
+        shift_time  = shift_time.expand_as(binarymasks)
         # shift_time  = shift_time * (1-binarymasks)  # shift only degraed area
         # shift_time  = shift_time * binarymasks    # shift only non-degraded area
         
@@ -758,6 +758,7 @@ class Scheduler:
         try: 
             shift   = shift.to(data.device)
             data    = data + shift 
+            
         except RuntimeError:
             shift   = shift[:,None,None,None]
             shift   = shift.to(data.device)
@@ -777,9 +778,17 @@ class Scheduler:
     
     
     def get_weight_timesteps(self, timesteps: torch.IntTensor, power_base: torch.FloatTensor=2.0):
-        # alpha   = torch.linspace(start=1, end=0, steps=self.updated_ddpm_num_steps)
-        alpha   = torch.linspace(start=0, end=1, steps=self.updated_ddpm_num_steps)
-        power   = torch.pow(power_base, alpha)
+        alpha   = torch.linspace(start=1, end=0, steps=self.updated_ddpm_num_steps)
+        # alpha   = torch.linspace(start=0, end=1, steps=self.updated_ddpm_num_steps)
+        power   = torch.pow(power_base, alpha)  # power_base ^ alpha
+        # plt.subplot(121)
+        # plt.plot(self.black_area_pixels, 'r', label='time threshold')
+        # plt.legend()
+        # plt.subplot(122)
+        # plt.plot(power, 'b', label='loss weight')
+        # plt.legend()
+        # plt.savefig('loss-weight.png')
+        # exit(1)
         power   = power.to(timesteps.device)
         weight  = power[timesteps]
         return weight
