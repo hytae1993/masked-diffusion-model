@@ -69,8 +69,11 @@ class Trainer:
         return loss
     
     def _shift_mean(self, img: torch.Tensor):
+        # (t - torch.mean(t)) / torch.std(t))
         mean    = img.mean(dim=(1,2,3), keepdim=True)
-        img     = img - mean
+        # mean    = img.mean(dim=(2,3), keepdim=True)
+        # std     = img.std(dim=(2,3), keepdim=True)
+        img     = (img - mean) 
         
         return img
          
@@ -99,18 +102,34 @@ class Trainer:
         # Create masks with random area black and obtation degraded image
         # ===================================================================================
         # timesteps           = torch.randint(low=1, high=self.args.updated_ddpm_num_steps+1, size=(input.shape[0],), device=input.device)
+        
+        # timeindex           = (torch.ones((self.input.shape[0],), device=self.input.device) * 61).int()
         timeindex           = torch.randint(low=0, high=len(self.timesteps_used_epoch), size=(self.input.shape[0],), device=self.input.device)
         timesteps           = torch.index_select(torch.tensor(self.timesteps_used_epoch, device=timeindex.device), 0, timeindex).to(self.args.weight_dtype)
         
         black_area_num      = self.Scheduler.get_black_area_num_pixels_time(timesteps)      # get number of removed pixels at each timestep 
-        self.degraded_img, self.degrade_binary_masks, self.degradation_mask, self.mean_pixel = self.Scheduler.degrade_training(black_area_num, self.input, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
         
+        self.degraded_img, self.degrade_binary_masks, self.degradation_mask, self.mean_pixel = self.Scheduler.degrade_training(black_area_num, self.input, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
         
         # ===================================================================================
         # shift 
         # ===================================================================================
         self.shift                  = self.Scheduler.get_schedule_shift_time(timesteps, self.degrade_binary_masks, self.input.mean(dim=(1,2,3))).to(self.args.weight_dtype) 
         self.shifted_degrade_img    = self.Scheduler.perturb_shift(self.degraded_img.to(self.args.weight_dtype), self.shift)
+        
+        # if self.accelerator.is_main_process:
+        #     print("=================================================")
+        #     print(self.input[0].mean(dim=(1,2)), self.input[0].mean())
+        #     print(self.shift[0].mean(dim=(1,2)), self.shift[0].mean())
+        #     print(self.shifted_degrade_img[0].mean(dim=(1,2)), self.shifted_degrade_img[0].mean())
+        #     print("=================================================")
+        #     print(self.input[0].std(dim=(1,2)), self.input[0].std())
+        #     print(self.shift[0].std(dim=(1,2)), self.shift[0].std())
+        #     print(self.shifted_degrade_img[0].std(dim=(1,2)), self.shifted_degrade_img[0].std())
+        #     exit(1)
+        
+        
+        
         
         # ===================================================================================
         # reconstruct and train 
@@ -119,6 +138,7 @@ class Trainer:
             self.mask               = self.model(self.shifted_degrade_img, timesteps).sample
             
             self.reconstructed_img  = self.shifted_degrade_img + self.mask
+            # self.reconstructed_img  = self.mask
             
             self.inverse_shift_reconstructed_img    = self.Scheduler.perturb_shift_inverse(self.reconstructed_img, self.shift)
             
@@ -162,8 +182,8 @@ class Trainer:
         
         
         
-        if self.accelerator.is_main_process and visualizer is not None:
-            visualizer.plot_current_losses(epoch, self.get_current_losses(), 'value')
+        # if self.accelerator.is_main_process and visualizer is not None:
+        #     visualizer.plot_current_losses(epoch, self.get_current_losses(), 'value')
         
         
         
@@ -224,6 +244,8 @@ class Trainer:
                 loss_mean_epoch.append(loss_mean)
                 # loss_std_epoch.append(loss_std)
                 
+                visualizer.plot_current_losses(epoch, self.get_current_losses(), 'value')
+                
                 if epoch > 0 and (epoch+1) % self.args.save_images_epochs == 0 or epoch == (epoch_start+epoch_length-1) or (epoch+1) % (epoch_length / self.args.scheduler_num_scale_timesteps) == 0:
     
                     # self._save_model(dirs, epoch)
@@ -237,7 +259,7 @@ class Trainer:
                     # save to wandb
                     if visualizer is not None:
                         visualizer.display_current_results(epoch, self.get_current_visuals(epoch))
-                        visualizer.plot_current_losses(epoch, self.get_current_mean(), 'value')
+                        # visualizer.plot_current_losses(epoch, self.get_current_mean(), 'value')
                         # visualizer.plot_current_losses(epoch, self.get_current_losses(), 'value')
                     
                     save_path   = os.path.join(dirs.list_dir['checkpoint'], f"checkpoint-epoch-{epoch}")
@@ -265,8 +287,8 @@ class Trainer:
         plt.title('learning rate')
         
         plt.subplot(1,3,3)
-        plt.plot(np.array(self.Scheduler.get_black_area_num_pixels_all()), color='red')
-        plt.title('degrade black area num = {}'.format(len(self.Scheduler.get_black_area_num_pixels_all())))
+        plt.plot(np.array(self.Scheduler.get_ratio_list()), color='red')
+        plt.title('degrade black area num = {}'.format(len(self.Scheduler.get_ratio_list())))
         
         plt.tight_layout()
         plt.savefig(file_loss, bbox_inches='tight', dpi=100)
@@ -322,7 +344,7 @@ class Trainer:
         
         nrow = int(np.ceil(np.sqrt(sample_list.shape[1])))
         self.sample_trained_x_0_list        = self.Sampler._save_multi_index_image_grid(sample_list, nrow=nrow, option='skip_first')    # result of x_0 for each t
-        self.sample_trained_t_list          = self.Sampler._save_multi_index_image_grid(t_list, nrow=nrow)         # result of each t
+        self.sample_trained_t_list          = self.Sampler._save_multi_index_image_grid(t_list, nrow=nrow, option='skip_first')         # result of each t
         self.sample_trained_mask_list       = self.Sampler._save_multi_index_image_grid(t_mask_list, nrow=nrow)
         self.sample_trained_t_shift_list    = self.Sampler._save_multi_index_image_grid(sample_t_shift_list, nrow=nrow, option='skip_first')
         self.sample_trained_x_0_shift_list  = self.Sampler._save_multi_index_image_grid(sample_shift_list, nrow=nrow, option='skip_first')
@@ -367,8 +389,8 @@ class Trainer:
         
         nrow = int(np.ceil(np.sqrt(ema_sample_list.shape[1])))
         # self.ema_sample_trained_x_0_list        = self.Sampler._save_multi_index_image_grid(ema_sample_list, nrow=nrow, option='skip_first')
-        # self.ema_sample_trained_t_list          = self.Sampler._save_multi_index_image_grid(ema_t_list, nrow=nrow)
-        # self.ema_sample_trained_mask_list       = self.Sampler._save_multi_index_image_grid(ema_mask_list, nrow=nrow)
+        # self.ema_sample_trained_t_list          = self.Sampler._save_multi_index_image_grid(ema_t_list, nrow=nrow, option='skip_first')
+        # self.ema_sample_trained_mask_list       = self.Sampler._save_multi_index_image_grid(ema_mask_list, nrow=nrow, option='skip_first')
         # self.ema_sample_trained_t_shift_list    = self.Sampler._save_multi_index_image_grid(ema_sample_t_shift_list, nrow=nrow, option='skip_first')
         # self.ema_sample_trained_x_0_shift_list  = self.Sampler._save_multi_index_image_grid(ema_sample_shift_list, nrow=nrow, option='skip_first')
         

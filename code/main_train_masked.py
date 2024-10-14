@@ -32,6 +32,7 @@ from utils.visualizer import Visualizer
 
 from trainer_masked import Trainer as BaseTrainer
 from trainer_masked_mean_shift import Trainer as MeanShiftTrainer
+from trainer_masked_mean_shift_v2 import Trainer as MeanShiftTrainer_v2
 from tester import Tester as Tester
 
 import utils.model as models
@@ -61,8 +62,9 @@ def get_dataloader(dataset: Dataset, batch_size: int, num_workers: int):
         batch_size=batch_size,
         drop_last=True,
         shuffle=True, 
-        # pin_memory=True,
+        pin_memory=True,
         num_workers=num_workers,  # not working for CPU
+        persistent_workers=True, 
         )
     return dataloader
     
@@ -232,6 +234,7 @@ def resume_train(args, accelerator, num_update_steps_per_epoch, dirs):
     else:
         accelerator.print(f"Resuming from checkpoint {path}")
         # accelerator.load_state(os.path.join(dirs.list_dir['checkpoint']))
+        accelerator.load_state(args.resume_from_checkpoint)
         global_step = int(path.split("-")[-1])
 
         resume_global_step  = global_step * args.gradient_accumulation_steps
@@ -325,6 +328,7 @@ if __name__ == '__main__':
     parser.add_argument('--data_subset_num', help='number of data subset', type=int, default=1000)
     parser.add_argument('--date', help='date of the program execution', type=str, default='')
     parser.add_argument('--time', help='time of the program execution', type=str, default='')
+    parser.add_argument('--wandb_name', type=str, default='diffusion')
     parser.add_argument('--method', help='algorithm of code', type=str, default='base')
     parser.add_argument('--test_method', help='algorithm of code', type=str, default='base')
     parser.add_argument('--title', help='title of experiment', type=str, default='')
@@ -355,20 +359,22 @@ if __name__ == '__main__':
     parser.add_argument("--ddpm_schedule", type=str, default="linear")
     parser.add_argument("--ddpm_schedule_base", type=float, default=10.0)
     parser.add_argument('--scheduler_num_scale_timesteps', type=int, default=1, help='1/2^n, 1/2^{n-1}, ..., 1/2^0 -> 1 use every timesteps')
+    parser.add_argument('--select_degrade_pixel', default='indexing')
+    parser.add_argument('--degrade_channel', type=str)
     parser.add_argument('--mean_option', default=0)
     parser.add_argument('--mean_area', default='image-wise',choices=['channel-wise', 'image-wise'])
     parser.add_argument('--mean_value_accumulate', type=eval, default=False, choices=[True, False])
-    parser.add_argument('--shift_type', type=str, default='noise_with_perturbation', choices=['constant', 'noise_reduction', 'noise_std_reduction', 'noise_with_perturbation', 'non_shift'])
+    parser.add_argument('--shift_type', type=str, default='noise_with_perturbation', choices=['1-d_constant', '3-d_constant', 'noise_reduction', 'noise_std_reduction', 'noise_with_perturbation', 'non_shift'])
     parser.add_argument('--noise_mean', type=float, default=0)
     # ======================================================================
     parser.add_argument("--sampling", type=str, default="base")
-    parser.add_argument("--momentum_adaptive", type=str, default="base_momentum", choices=['base_momentum', 'momentum', 'boosting'])
+    parser.add_argument("--momentum_adaptive", type=str, default="base_momentum", choices=['base_momentum', 'base_sampling', 'momentum', 'boosting'])
     parser.add_argument('--adaptive_decay_rate', type=float, default=0.999)
     parser.add_argument('--adaptive_momentum_rate', type=float, default=0.9)
-    parser.add_argument("--sampling_mask_dependency", help='dependcy of degradation mask between t', type=str, default="independent", choices=['dependent', 'independent', 'dependent_in_t'])
+    parser.add_argument("--sampling_mask_dependency", help='dependcy of degradation mask between t', type=str, default="independent", choices=['dependent_prev', 'independent', 'dependent_t'])
     parser.add_argument('--sample_num', help='number of samples during the training', type=int, default=100)
     parser.add_argument('--sample_epoch_ratio', help='ratio of the epoch length for the training', type=float, default=0.2)
-    parser.add_argument('--resume_from_checkpoint', help='resume training', default=False)
+    parser.add_argument('--resume_from_checkpoint', help='resume training', default="False")
     parser.add_argument('--num_workers', help='number of workers', type=int, default=32)
     parser.add_argument("--checkpointing_steps", type=int, default=500)
     parser.add_argument("--save_images_epochs", type=int, default=10)

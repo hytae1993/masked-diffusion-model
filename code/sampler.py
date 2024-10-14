@@ -47,7 +47,10 @@ class Sampler:
         
         # random      = torch.FloatTensor(self.args.sample_num).normal_(mean=0, std=0.1)
         # random      = torch.FloatTensor(self.args.sample_num).uniform_(-1, 1)  
-        random      = torch.zeros(self.args.sample_num)  
+        random      = torch.linspace(-1, 1, self.args.sample_num)
+        # random      = torch.zeros(self.args.sample_num)  
+        # random      = torch.ones(self.args.sample_num) * 0.1
+        
         random      = random[:,None,None,None]
         latent      = latent + random
         
@@ -361,6 +364,7 @@ class Sampler:
                 # print(mask.min(), mask.max(), mask.mean())
                 # print(sample_0.min(), sample_0.max(), sample_0.mean())
                 
+                sample_t_list[len(timesteps_used_epoch) - i]            = sample_t
                 shift_list[len(timesteps_used_epoch) - i]               = shift
                 shifted_list[len(timesteps_used_epoch) - i]             = shifted_sample_t
                 mask_list[len(timesteps_used_epoch) - i]                = mask
@@ -373,6 +377,7 @@ class Sampler:
                     next_t  = time
                 black_area_num_t            = self.Scheduler.get_black_area_num_pixels_time(time)
                 black_area_num_next_t       = self.Scheduler.get_black_area_num_pixels_time(next_t)
+                
                 
                 if self.args.sampling_mask_dependency == 'independent':
                     # degraded_t  = self.Scheduler.degrade_with_mask(sample_0, degrade_mask_next_t, mean_option=self.args.mean_option, mean_area=self.args.mean_area)
@@ -454,8 +459,8 @@ class Sampler:
                 degraded_next_t_list[len(timesteps_used_epoch) - i] = degraded_next_t    
                 degraded_t_list[len(timesteps_used_epoch) - i]      = degraded_t    
                 difference_list[len(timesteps_used_epoch) - i]      = difference    
-                if i != 0:
-                    sample_t_list[len(timesteps_used_epoch) - i]        = sample_t
+                # if i != 0:
+                #     sample_t_list[len(timesteps_used_epoch) - i]        = sample_t
                     
                 sample_progress_bar.update(1)
         sample_progress_bar.close()
