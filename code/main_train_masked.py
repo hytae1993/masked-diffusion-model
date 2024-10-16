@@ -52,8 +52,41 @@ def get_dataset(data_path: str, data_name: str, data_set: str,  data_height: int
         # dataset using torch
         # dataset = datasetutils.DatasetUtils(data_path, data_name, data_set, data_height, data_width, data_subset, data_subset_num)
         dataset = MyDataset(data_path, data_name, data_height, split='train', data_subset=data_subset, num_data=data_subset_num)
+        
+        
+    # =========================================================================
+    # compute the statistics (histogram) of the mean
+    # =========================================================================
+    if args.sample_latent_shape.lower() == 'data':
+        dataloader_statistics   = DataLoader(dataset, batch_size=100, drop_last=False, shuffle=False, num_workers=0)
+        mean_statistics         = torch.Tensor([])
+        
+        for _, batch_statistics in enumerate(dataloader_statistics):
+            data_statistics = batch_statistics[0]
+            
+            if args.mean_area == 'channel-wise':
+                mean_data = torch.mean(data_statistics, dim=[2, 3])
+            elif args.mean_area == 'image-wise':
+                mean_data = torch.mean(data_statistics, dim=[1, 2, 3])
+                mean_data = mean_data.unsqueeze(-1)
+            
+            mean_statistics = torch.cat((mean_statistics, mean_data), 0)
+
+        # either Nx1 or Nx3 (channelwise)
+        hist_mean_data, hist_bin_edges = torch.histogramdd(mean_statistics, bins=args.sample_num, density=True)
+        hist_shape          = hist_mean_data.shape 
+        hist_mean_data      = torch.ravel(hist_mean_data)
+        hist_mean_data      = hist_mean_data / torch.sum(hist_mean_data)
+        hist_mean_cum_sum   = torch.cumsum(hist_mean_data, dim=0)
+        
+    else:
+        hist_shape          = None
+        hist_bin_edges      = None
+        hist_mean_cum_sum   = None
+        
+    data_hist   = [hist_shape, hist_bin_edges, hist_mean_cum_sum]
     
-    return dataset
+    return dataset, data_hist
  
 
 def get_dataloader(dataset: Dataset, batch_size: int, num_workers: int):
@@ -251,8 +284,8 @@ def load_test_model(args, accelerator):
     
 def main(dirs: dict, args: dict):
     
-    dataset     = get_dataset(args.dir_dataset, args.data_name, args.data_set, args.data_size, args.data_size, args.data_subset, args.data_subset_num, args.method)
-    dataloader  = get_dataloader(dataset, args.batch_size, args.num_workers)
+    dataset, dataset_hist   = get_dataset(args.dir_dataset, args.data_name, args.data_set, args.data_size, args.data_size, args.data_subset, args.data_subset_num, args.method)
+    dataloader              = get_dataloader(dataset, args.batch_size, args.num_workers)
     
     model       = get_model(args)
     ema_model   = get_ema(args, model)
@@ -294,7 +327,7 @@ def main(dirs: dict, args: dict):
     if args.method.lower()  == 'base':
         trainer = BaseTrainer(args, dataloader, dataset, model, ema_model, optimizer, lr_scheduler, accelerator)
     elif args.method.lower() == 'mean_shift':
-        trainer = MeanShiftTrainer(args, dataloader, dataset, model, ema_model, optimizer, lr_scheduler, accelerator)
+        trainer = MeanShiftTrainer(args, dataloader, dataset, dataset_hist, model, ema_model, optimizer, lr_scheduler, accelerator)
     elif args.method.lower() == 'test':
         load_test_model(args, accelerator)
         trainer = Tester(args, dataloader, dataset, model, ema_model, optimizer, lr_scheduler, accelerator)
@@ -367,6 +400,7 @@ if __name__ == '__main__':
     parser.add_argument('--shift_type', type=str, default='noise_with_perturbation', choices=['1-d_constant', '3-d_constant', 'noise_reduction', 'noise_std_reduction', 'noise_with_perturbation', 'non_shift'])
     parser.add_argument('--noise_mean', type=float, default=0)
     # ======================================================================
+    parser.add_argument("--sample_latent_shape", type=str, default="data", choices=['data', 'zero', 'normal', 'uniform', 'grid'])
     parser.add_argument("--sampling", type=str, default="base")
     parser.add_argument("--momentum_adaptive", type=str, default="base_momentum", choices=['base_momentum', 'base_sampling', 'momentum', 'boosting'])
     parser.add_argument('--adaptive_decay_rate', type=float, default=0.999)

@@ -30,6 +30,7 @@ class Trainer:
         args,
         dataloader,
         dataset,
+        dataset_hist,
         model,
         ema_model,
         optimizer,
@@ -39,6 +40,7 @@ class Trainer:
         self.args               = args
         self.dataloader         = dataloader
         self.dataset            = dataset
+        self.dataset_hist       = dataset_hist
         self.model              = model
         self.ema_model          = ema_model
         self.optimizer          = optimizer
@@ -49,7 +51,7 @@ class Trainer:
         self.criterion          = nn.MSELoss()
         
         self.Scheduler          = Scheduler(args)
-        self.Sampler            = Sampler(self.dataset, self.args, self.Scheduler)
+        self.Sampler            = Sampler(self.dataset, self.args, self.Scheduler, self.dataset_hist)
         
         self.global_step        = 0
         
@@ -114,7 +116,7 @@ class Trainer:
         # ===================================================================================
         # shift 
         # ===================================================================================
-        self.shift                  = self.Scheduler.get_schedule_shift_time(timesteps, self.degrade_binary_masks, self.input.mean(dim=(1,2,3))).to(self.args.weight_dtype) 
+        self.shift                  = self.Scheduler.get_schedule_shift_time(timesteps, self.degrade_binary_masks).to(self.args.weight_dtype) 
         self.shifted_degrade_img    = self.Scheduler.perturb_shift(self.degraded_img.to(self.args.weight_dtype), self.shift)
         
         # if self.accelerator.is_main_process:
@@ -244,7 +246,8 @@ class Trainer:
                 loss_mean_epoch.append(loss_mean)
                 # loss_std_epoch.append(loss_std)
                 
-                visualizer.plot_current_losses(epoch, self.get_current_losses(), 'value')
+                if visualizer is not None:
+                    visualizer.plot_current_losses(epoch, self.get_current_losses(), 'value')
                 
                 if epoch > 0 and (epoch+1) % self.args.save_images_epochs == 0 or epoch == (epoch_start+epoch_length-1) or (epoch+1) % (epoch_length / self.args.scheduler_num_scale_timesteps) == 0:
     
